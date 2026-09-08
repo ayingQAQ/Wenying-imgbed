@@ -109,11 +109,6 @@
         >
             <div class="quick-toolbar-actions">
                 <div class="quick-toolbar-actions-inner">
-                    <el-tooltip :disabled="disableTooltip || !isQuickToolbarOpen" :content="$t('upload.logout')" placement="left" :hide-after="0" :show-after="1000">
-                        <el-button class="quick-toolbar-button" @click="handleQuickToolbarCommand('logout')">
-                            <font-awesome-icon icon="sign-out-alt" class="quick-toolbar-icon"/>
-                        </el-button>
-                    </el-tooltip>
                     <el-tooltip :disabled="disableTooltip || !isQuickToolbarOpen" :content="$t('upload.manage')" placement="left" :hide-after="0" :show-after="1000">
                         <el-button class="quick-toolbar-button" @click="handleQuickToolbarCommand('manage')">
                             <font-awesome-icon icon="cog" class="quick-toolbar-icon"/>
@@ -230,6 +225,7 @@
             v-model:compressBar="compressBar"
             v-model:compressQuality="compressQuality"
             v-model:serverCompress="serverCompress"
+            @admin-login="openAdminLogin"
         />
     </div>
     <Footer class="footer"/>
@@ -502,7 +498,11 @@ export default {
             }
         },
         handleManage() {
-            this.$router.push('/dashboard')
+            this.$router.push('/adminLogin')
+        },
+        openAdminLogin() {
+            this.showCompressDialog = false
+            this.$router.push('/adminLogin')
         },
         // 解析布尔值
         parseBoolean(value, defaultValue) {

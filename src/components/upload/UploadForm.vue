@@ -1517,7 +1517,8 @@ methods: {
                     fileSize: file.file.size,
                     fileName: file.file.name,
                     fileType: file.file.type,
-                    channelName: uploadInfo.channelName
+                    channelName: uploadInfo.channelName,
+                    anonymousReservation: uploadInfo.anonymousReservation
                 },
                 withAuthCode: true,
                 signal: abortController.signal

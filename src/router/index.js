@@ -98,13 +98,12 @@ const routes = [
   {
     path: '/',
     name: 'home',
-    component: () => import('../views/UploadHome.vue'),
-    beforeEnter: userAuthGuard
+    component: () => import('../views/UploadHome.vue')
   },
   {
     path: '/login',
     name: 'login',
-    component: () => import('../views/Login.vue')
+    redirect: '/'
   },
   {
     path: '/dashboard',

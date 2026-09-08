@@ -155,6 +155,10 @@
         </div>
         
         <div class="dialog-action">
+            <el-button @click="$emit('admin-login')">
+                <font-awesome-icon icon="sign-in-alt" />
+                {{ $i18n.locale === 'zh-CN' ? '管理员登录' : 'Administrator login' }}
+            </el-button>
             <el-button type="primary" @click="visible = false" class="confirm-btn">{{ $t('uploadSettings.confirm') }}</el-button>
         </div>
     </el-dialog>
@@ -238,7 +242,8 @@ export default {
         'update:customerCompress',
         'update:compressBar',
         'update:compressQuality',
-        'update:serverCompress'
+        'update:serverCompress',
+        'admin-login'
     ],
     watch: {
         availableChannels: {
