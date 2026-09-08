@@ -33,9 +33,7 @@ export default {
         marqueeItems() {
             const items = [
                 `Wenying ImgHub 已迎来 ${this.siteStats.visits.toLocaleString()} 人次`,
-                `累计托管 ${this.siteStats.images.toLocaleString()} 张图片`,
-                'R2 与 Hugging Face 双存储守护',
-                'Telegram 持续备份中'
+                `累计托管 ${this.siteStats.images.toLocaleString()} 张图片`
             ]
             return [...items, ...items]
         }
