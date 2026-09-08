@@ -1366,4 +1366,8 @@ html.dark .upload-folder:hover :deep(.el-input__wrapper) {
     .header { margin-bottom: 24px; }
     .quick-toolbar { --quick-toolbar-size: 52px; --quick-toolbar-button-size: 44px; }
 }
+
+.upload-folder :deep(.el-input__inner) {
+    text-align: center;
+}
 </style>

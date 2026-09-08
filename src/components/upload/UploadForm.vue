@@ -2119,6 +2119,7 @@ html.dark .el-upload__text :deep(em) {
     font-size: 14px;
     line-height: 1.6;
     color: var(--el-text-color-primary);
+    text-align: center;
 }
 
 .upload-card-textarea :deep(.el-textarea__inner::placeholder) {
@@ -2170,31 +2171,31 @@ html.dark .el-upload__text :deep(em) {
     font-weight: 600;
     font-size: 14px;
     letter-spacing: 0.04em;
-    color: var(--primary-color-accent) !important;
-    background: color-mix(in srgb, var(--primary-color) 10%, transparent) !important;
-    border: 1px solid color-mix(in srgb, var(--primary-color) 36%, var(--glass-border)) !important;
+    color: #fff !important;
+    background: var(--primary-color) !important;
+    border: 1px solid var(--primary-color) !important;
     box-shadow: none;
     transition: background-color 0.2s ease, border-color 0.2s ease, transform 0.2s ease !important;
 }
 
 .paste-card-upload-button:hover {
-    color: var(--primary-color-accent) !important;
-    background: color-mix(in srgb, var(--primary-color) 14%, transparent) !important;
-    border-color: color-mix(in srgb, var(--primary-color) 52%, var(--glass-border)) !important;
+    color: #fff !important;
+    background: color-mix(in srgb, var(--primary-color) 88%, black) !important;
+    border-color: color-mix(in srgb, var(--primary-color) 88%, black) !important;
     transform: translateY(-1px);
     box-shadow: none;
 }
 
 .paste-card-upload-button:focus-visible {
-    color: var(--primary-color-accent) !important;
-    background: color-mix(in srgb, var(--primary-color) 14%, transparent) !important;
-    border-color: color-mix(in srgb, var(--primary-color) 52%, var(--glass-border)) !important;
+    color: #fff !important;
+    background: var(--primary-color) !important;
+    border-color: var(--primary-color) !important;
     box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary-color) 14%, transparent) !important;
 }
 
 .paste-card-upload-button:active {
-    transform: translateY(0);
-    background: color-mix(in srgb, var(--primary-color) 18%, transparent) !important;
+    transform: scale(0.98);
+    background: color-mix(in srgb, var(--primary-color) 82%, black) !important;
 }
 
 /* 上传状态下缩小按钮 */
@@ -2321,19 +2322,19 @@ html.dark .el-upload__text :deep(em) {
     }
 
     .paste-card-upload-button {
-        height: 28px;
-        min-width: 56px;
-        border-radius: 7px !important;
-        font-size: 11px;
+        height: 32px;
+        min-width: 72px;
+        border-radius: 8px !important;
+        font-size: 12px;
         letter-spacing: 0.02em;
         padding: 0 10px;
     }
 
     .upload-card-busy .paste-card-upload-button {
-        height: 28px;
-        min-width: 56px;
-        border-radius: 7px !important;
-        font-size: 11px;
+        height: 32px;
+        min-width: 72px;
+        border-radius: 8px !important;
+        font-size: 12px;
     }
 
     .upload-card-busy .paste-card-actions {
@@ -2341,8 +2342,8 @@ html.dark .el-upload__text :deep(em) {
     }
 
     .paste-card-method-group {
-        width: 112px;
-        height: 28px;
+        width: 128px;
+        height: 32px;
         padding: 2px;
         border-radius: 8px;
     }
@@ -2356,9 +2357,9 @@ html.dark .el-upload__text :deep(em) {
     }
 
     .paste-card-method-button {
-        height: 22px;
+        height: 26px;
         padding: 0 8px;
-        font-size: 10px;
+        font-size: 11px;
         border-radius: 6px;
     }
 }

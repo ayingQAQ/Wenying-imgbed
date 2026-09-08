@@ -12,10 +12,10 @@ body .dashboard-shell .main-container { margin-top: 8px; }
     body .dashboard-shell .admin-header-content { grid-template-columns: minmax(0, 1fr) auto; padding: 6px 10px; gap: 0 8px; }
     body .dashboard-shell .toolbar-toggle { display: block; }
     body .dashboard-shell .search-area, body .dashboard-shell .actions { display: none; }
-    body .dashboard-shell.toolbar-expanded .search-area { display: flex; grid-column: 1; margin-top: 8px; }
-    body .dashboard-shell.toolbar-expanded .actions { display: flex; grid-column: 2; margin-top: 8px; }
+    body .dashboard-shell.toolbar-expanded .search-area { display: flex; grid-column: 1; grid-row: 2; margin-top: 4px; }
+    body .dashboard-shell.toolbar-expanded .actions { display: flex; grid-column: 2; grid-row: 2; margin-top: 4px; }
     body .dashboard-shell .search-card { width: 100%; }
-    body .dashboard-shell.toolbar-expanded .main-container { margin-top: 52px; }
+    body .dashboard-shell.toolbar-expanded .main-container { margin-top: 36px; }
     body .dashboard-shell .tabs { min-width: 0; justify-content: flex-start; }
 }
 body .upload-home :is(.more-button, .directory-tree-trigger, .upload-method-button, .toggle-dark-button, .upload-folder) {

@@ -76,7 +76,7 @@
         top: 6px;
         width: calc(100% - 32px);
         padding: 6px 12px;
-        gap: 4px;
+        gap: 2px;
         border-radius: 14px;
     }
 
@@ -87,7 +87,7 @@
 
     .header-content .actions {
         gap: 10px;
-        margin-top: 10px;
+        margin-top: 0;
     }
 }
 
