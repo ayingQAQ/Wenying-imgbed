@@ -11,13 +11,23 @@
  * @returns {{ finalURL: string, mdURL: string, htmlURL: string, ubbURL: string }}
  */
 export function buildFileUrls(srcID, name, rootUrl) {
-    const url = rootUrl + srcID
+    const prefix = String(rootUrl || '').replace(/\/+$/, '')
+    const id = String(srcID || '').replace(/^\/+/, '')
+    const url = `${prefix}/${id}`
     return {
         finalURL: url,
         mdURL: `![${name}](${url})`,
         htmlURL: `<img src="${url}" alt="${name}" width=100% />`,
         ubbURL: `[img]${url}[/img]`
     }
+}
+
+/** Extract the internal file ID from a relative URL, absolute URL, or raw ID. */
+export function extractFileId(source) {
+    const value = String(source || '').trim()
+    const marker = '/file/'
+    const markerIndex = value.indexOf(marker)
+    return (markerIndex >= 0 ? value.slice(markerIndex + marker.length) : value).replace(/^\/+/, '')
 }
 
 /**

@@ -175,7 +175,7 @@ import axios from '@/utils/axios'
 import { resumeTelegramBackup } from '@/utils/upload/telegramBackup'
 import * as imageConversion from 'image-conversion'
 import { mapGetters } from 'vuex'
-import { buildFileUrls, updateFileListUrls, getUrlByFormat } from '@/utils/upload/urlBuilder'
+import { buildFileUrls, extractFileId, updateFileListUrls, getUrlByFormat } from '@/utils/upload/urlBuilder'
 import { computeSha256 } from '@/utils/upload/sha256'
 import {
     collectFilesFromDataTransferItems,
@@ -357,7 +357,8 @@ computed: {
     },
     rootUrl() {
         // 链接前缀，优先级：用户自定义 > urlPrefix > 默认
-        return this.useCustomUrl === 'true' ? this.customUrlPrefix : this.urlPrefix || `${window.location.protocol}//${window.location.host}/file/`
+        const fallback = this.urlPrefix || `${window.location.protocol}//${window.location.host}/file/`
+        return this.useCustomUrl === 'true' && this.customUrlPrefix?.trim() ? this.customUrlPrefix.trim() : fallback
     },
     pasteCardMethodButtonSize() {
         if (this.fileList.length) {
@@ -932,8 +933,7 @@ methods: {
             // 对上传渠道为外链的，不修改链接
             const uploadChannel = fileItem.uploadChannel || this.uploadChannel
             if (uploadChannel !== 'external') {
-                // 从response.data[0].src中去除/file/前缀
-                const srcID = response.data[0].src.replace('/file/', '')
+                const srcID = extractFileId(response.data[0].src)
                 fileItem.url = `${window.location.protocol}//${window.location.host}/file/` + srcID
                 const urls = buildFileUrls(srcID, file.name, this.rootUrl)
                 Object.assign(fileItem, urls)

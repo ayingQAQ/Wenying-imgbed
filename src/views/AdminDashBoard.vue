@@ -69,20 +69,67 @@
                 </div>
                 <el-dropdown
                     trigger="click"
-                    @command="sort"
                     class="breadcrumb-sort-dropdown"
+                    @command="setSortField"
                 >
                     <button
                         class="breadcrumb-sort-button"
                         type="button"
                         :title="sortLabel"
                     >
-                        <font-awesome-icon :icon="sortIcon" class="breadcrumb-sort-icon"></font-awesome-icon>
+                        <svg class="breadcrumb-sort-icon" viewBox="0 0 30 18" aria-hidden="true">
+                            <g v-if="sortField === 'time'" class="sort-field-glyph">
+                                <circle cx="7.5" cy="9" r="5.5" />
+                                <path d="M7.5 5.5V9L10 10.5" />
+                            </g>
+                            <g v-else-if="sortField === 'size'" class="sort-field-glyph">
+                                <path d="M2 4H13M2 9H10M2 14H7" />
+                            </g>
+                            <g v-else-if="sortField === 'rawName'" class="sort-field-glyph">
+                                <path d="M5.5 3L4 15M11 3L9.5 15M2.5 7H13M2 11H12.5" />
+                            </g>
+                            <g v-else class="sort-field-glyph">
+                                <path d="M2.5 14L7.5 3L12.5 14M4.3 10H10.7" />
+                            </g>
+                            <path
+                                v-if="sortOrder === 'asc'"
+                                class="sort-order-glyph"
+                                d="M23 13.5V4.5M19 8.5L23 4.5L27 8.5"
+                            />
+                            <path
+                                v-else
+                                class="sort-order-glyph"
+                                d="M23 4.5V13.5M19 9.5L23 13.5L27 9.5"
+                            />
+                        </svg>
                     </button>
                     <template #dropdown>
-                        <el-dropdown-menu>
-                            <el-dropdown-item command="dateDesc">{{ $t('dashboard.sortByDateDesc') }}</el-dropdown-item>
-                            <el-dropdown-item command="nameAsc">{{ $t('dashboard.sortByNameAsc') }}</el-dropdown-item>
+                        <el-dropdown-menu class="sort-dropdown-menu">
+                            <div class="sort-order-wrapper">
+                                <el-radio-group v-model="sortOrder" size="small" @change="setSortOrder">
+                                    <el-radio-button label="asc">{{ $t('dashboard.sortAsc') }}</el-radio-button>
+                                    <el-radio-button label="desc">{{ $t('dashboard.sortDesc') }}</el-radio-button>
+                                </el-radio-group>
+                            </div>
+
+                            <el-divider class="sort-divider" />
+
+                            <el-dropdown-item command="time" :class="{ 'is-selected': sortField === 'time' }">
+                                <span>{{ $t('dashboard.sortByTime') }}</span>
+                                <font-awesome-icon v-if="sortField === 'time'" icon="check" class="sort-field-check" />
+                            </el-dropdown-item>
+                            <el-dropdown-item command="size" :class="{ 'is-selected': sortField === 'size' }">
+                                <span>{{ $t('dashboard.sortBySize') }}</span>
+                                <font-awesome-icon v-if="sortField === 'size'" icon="check" class="sort-field-check" />
+                            </el-dropdown-item>
+                            <el-dropdown-item command="rawName" :class="{ 'is-selected': sortField === 'rawName' }">
+                                <span>{{ $t('dashboard.sortByRawName') }}</span>
+                                <font-awesome-icon v-if="sortField === 'rawName'" icon="check" class="sort-field-check" />
+                            </el-dropdown-item>
+                            <el-dropdown-item command="fileName" :class="{ 'is-selected': sortField === 'fileName' }">
+                                <span>{{ $t('dashboard.sortByFileName') }}</span>
+                                <font-awesome-icon v-if="sortField === 'fileName'" icon="check" class="sort-field-check" />
+                            </el-dropdown-item>
                         </el-dropdown-menu>
                     </template>
                 </el-dropdown>
@@ -422,6 +469,18 @@ import InterfaceIcon from '@/components/InterfaceIcon.vue';
 import { ref } from 'vue';
 import { useDragSelect } from '@/utils/dashboard/useDragSelect.js';
 
+const SORT_FIELDS = ['time', 'size', 'rawName', 'fileName'];
+const SORT_ORDERS = ['asc', 'desc'];
+
+function getStoredSortValue(key, validValues, fallback) {
+    try {
+        const value = localStorage.getItem(key);
+        return validValues.includes(value) ? value : fallback;
+    } catch {
+        return fallback;
+    }
+}
+
 export default {
 name: 'AdminDashBoard',
 mixins: [backgroundManager],
@@ -442,7 +501,8 @@ data() {
         currentPage: 1,
         pageSize: 15,
         selectedFiles: [],
-        sortOption: 'dateDesc',
+        sortField: getStoredSortValue('sortField', SORT_FIELDS, 'time'),
+        sortOrder: getStoredSortValue('sortOrder', SORT_ORDERS, 'desc'),
         isUploading: false,
         showdetailDialog: false,
         detailFile: null,
@@ -584,11 +644,16 @@ computed: {
         });
         return data;
     },
-    sortIcon() {
-        return this.sortOption === 'dateDesc' ? 'sort-amount-down' : 'sort-alpha-up';
-    },
     sortLabel() {
-        return this.sortOption === 'dateDesc' ? this.$t('dashboard.sortByDateDesc') : this.$t('dashboard.sortByNameAsc');
+        const labelKeys = {
+            time: 'dashboard.sortByTime',
+            size: 'dashboard.sortBySize',
+            rawName: 'dashboard.sortByRawName',
+            fileName: 'dashboard.sortByFileName'
+        };
+        const fieldLabel = this.$t(labelKeys[this.sortField] || labelKeys.time);
+        const orderLabel = this.$t(this.sortOrder === 'desc' ? 'dashboard.sortDesc' : 'dashboard.sortAsc');
+        return `${fieldLabel} · ${orderLabel}`;
     },
     dialogWidth() {
         return window.innerWidth > 768 ? '50%' : '90%';
@@ -648,7 +713,8 @@ computed: {
     },
     rootUrl() {
         // 链接前缀，优先级：用户自定义 > urlPrefix > 默认
-        return this.useCustomUrl === 'true' ? this.customUrlPrefix : this.userConfig?.urlPrefix || `${document.location.origin}/file/`
+        const fallback = this.userConfig?.urlPrefix || `${document.location.origin}/file/`
+        return this.useCustomUrl === 'true' && this.customUrlPrefix?.trim() ? this.customUrlPrefix.trim() : fallback
     },
     isSelectAll: {
         get() {
@@ -691,9 +757,6 @@ watch: {
             this.selectedFiles = this.selectedFiles.filter(file => newData.includes(file));
         },
         deep: true
-    },
-    sortOption(newOption) {
-        localStorage.setItem('sortOption', newOption);
     },
     defaultUrlFormat(newFormat) {
         localStorage.setItem('defaultUrlFormat', newFormat);
@@ -1261,23 +1324,69 @@ methods: {
             this.Number += num;
         }
     },
-    sort(command) {
-        this.sortOption = command;
+    setSortField(field) {
+        if (!SORT_FIELDS.includes(field)) return;
+        this.sortField = field;
+        this.currentPage = 1;
+        localStorage.setItem('sortField', field);
+    },
+    setSortOrder(order) {
+        if (!SORT_ORDERS.includes(order)) return;
+        this.sortOrder = order;
+        this.currentPage = 1;
+        localStorage.setItem('sortOrder', order);
     },
     sortData(data) {
-        // 文件夹始终在前
+        if (!Array.isArray(data)) return [];
+
         const folders = data.filter(file => file.isFolder);
         const files = data.filter(file => !file.isFolder);
 
-        if (this.sortOption === 'dateDesc') {
-            // 按时间降序
-            folders.sort((a, b) => new Date(b.metadata?.TimeStamp) - new Date(a.metadata?.TimeStamp));
-            files.sort((a, b) => new Date(b.metadata?.TimeStamp) - new Date(a.metadata?.TimeStamp));
-        } else {
-            // 按文件名升序
-            folders.sort((a, b) => a.name.localeCompare(b.name));
-            files.sort((a, b) => a.name.localeCompare(b.name));
-        }
+        const getSizeInBytes = (item) => {
+            const parseSize = (value) => {
+                if (value === null || value === undefined || value === '') return null;
+                const parsedValue = Number(value);
+                return Number.isFinite(parsedValue) ? parsedValue : null;
+            };
+            const sizeInBytes = parseSize(item.metadata?.FileSizeBytes);
+            if (sizeInBytes !== null) return sizeInBytes;
+
+            const sizeInMegabytes = parseSize(item.metadata?.FileSize);
+            if (sizeInMegabytes !== null) return sizeInMegabytes * 1024 * 1024;
+
+            return parseSize(item.size) ?? 0;
+        };
+
+        const getValue = (item) => {
+            switch (this.sortField) {
+                case 'size':
+                    return getSizeInBytes(item);
+                case 'rawName':
+                    return item.metadata?.RawName || item.name || '';
+                case 'fileName':
+                    return item.metadata?.FileName || item.name || '';
+                case 'time':
+                default:
+                    return item.metadata?.TimeStamp ? new Date(item.metadata.TimeStamp).getTime() : 0;
+            }
+        };
+
+        const compare = (a, b) => {
+            const valA = getValue(a);
+            const valB = getValue(b);
+
+            let result = 0;
+            if (typeof valA === 'string' || typeof valB === 'string') {
+                result = String(valA || '').localeCompare(String(valB || ''));
+            } else {
+                result = valA - valB;
+            }
+
+            return this.sortOrder === 'desc' ? -result : result;
+        };
+
+        folders.sort(compare);
+        files.sort(compare);
 
         return folders.concat(files);
     },
@@ -2225,7 +2334,7 @@ beforeUnmount() {
 }
 
 .breadcrumb-sort-button {
-    width: 32px;
+    width: 44px;
     height: 32px;
     box-sizing: border-box;
     display: inline-flex;
@@ -2252,8 +2361,22 @@ beforeUnmount() {
 }
 
 .breadcrumb-sort-icon {
-    width: 14px;
-    height: 14px;
+    width: 30px;
+    height: 18px;
+    overflow: visible;
+}
+
+.sort-field-glyph,
+.sort-order-glyph {
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.6;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+}
+
+.sort-order-glyph {
+    stroke-width: 1.9;
 }
 
 @media (max-width: 768px) {
@@ -2288,13 +2411,13 @@ beforeUnmount() {
         height: 12px;
     }
     .breadcrumb-sort-button {
-        width: 28px;
+        width: 40px;
         height: 28px;
         border-radius: 8px;
     }
     .breadcrumb-sort-icon {
-        width: 12px;
-        height: 12px;
+        width: 27px;
+        height: 16px;
     }
 }
 
@@ -2752,6 +2875,33 @@ beforeUnmount() {
     pointer-events: none;
     z-index: 9999;
     border-radius: 2px;
+}
+
+
+.sort-dropdown-menu {
+    min-width: 205px;
+}
+
+.sort-order-wrapper {
+    padding: 0 12px;
+    text-align: center;
+}
+
+.sort-divider {
+    margin: 8px 0 !important;
+}
+
+.sort-dropdown-menu :deep(.el-dropdown-menu__item) {
+    justify-content: space-between;
+}
+
+.sort-dropdown-menu :deep(.el-dropdown-menu__item.is-selected) {
+    color: var(--primary-color-accent);
+}
+
+.sort-field-check {
+    width: 12px;
+    margin-left: 16px;
 }
 
 </style>
