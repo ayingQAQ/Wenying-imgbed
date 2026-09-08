@@ -32,9 +32,9 @@ export default createStore({
       customUrlPrefix: '',
     },
     autoReUpload: true,
-    // 深色模式
-    useDarkMode: null,
-    cusDarkMode: false,
+    // 首次访问默认使用亮色；用户手动切换后继续持久化其选择
+    useDarkMode: false,
+    cusDarkMode: true,
   },
   getters: {
     userConfig: state => state.userConfig,
