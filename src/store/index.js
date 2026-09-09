@@ -112,6 +112,18 @@ export default createStore({
     }
   },
   actions: {
+    async checkAdminSession({ commit }) {
+      try {
+        const response = await axios.get('/api/auth/sessionCheck', { withCredentials: true });
+        const data = response.data || {};
+        const loggedIn = !data.adminRequired || (data.valid && data.authType === 'admin');
+        commit('setAdminLoggedIn', loggedIn);
+        return loggedIn;
+      } catch (error) {
+        commit('setAdminLoggedIn', false);
+        return false;
+      }
+    },
     async fetchUserConfig({ commit }) {
       try {
         const response = await axios.get('/api/userConfig');

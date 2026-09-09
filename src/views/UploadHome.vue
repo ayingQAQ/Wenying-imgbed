@@ -28,7 +28,7 @@
                 </el-dropdown-menu>
             </template>
         </el-dropdown>
-        <div class="upload-folder-container" :class="{ 'no-announcement': !announcementAvailable }">
+        <div v-if="adminLoggedIn" class="upload-folder-container" :class="{ 'no-announcement': !announcementAvailable }">
             <div class="upload-folder" :class="{ 'active': isFolderInputActive }">
                 <DirectorySuggestionInput
                     v-if="showDirectorySuggestions"
@@ -157,7 +157,7 @@
             :autoRetry="autoRetry"
             :urlPrefix="urlPrefix"
             :uploadMethod="uploadMethod"
-            :uploadFolder="uploadFolder"
+            :uploadFolder="adminLoggedIn ? uploadFolder : ''"
             :convertToWebp="convertToWebp"
             class="upload"
         />
@@ -225,6 +225,7 @@
             v-model:compressBar="compressBar"
             v-model:compressQuality="compressQuality"
             v-model:serverCompress="serverCompress"
+            :admin-logged-in="adminLoggedIn"
             @admin-login="openAdminLogin"
         />
     </div>
@@ -361,7 +362,7 @@ export default {
         }
     },
     computed: {
-        ...mapGetters(['userConfig', 'uploadCopyUrlForm', 'compressConfig', 'storeUploadChannel', 'storeChannelName', 'storeUploadNameType', 'customUrlSettings', 'storeAutoRetry', 'storeUploadMethod', 'storeUploadFolder']),
+        ...mapGetters(['userConfig', 'adminLoggedIn', 'uploadCopyUrlForm', 'compressConfig', 'storeUploadChannel', 'storeChannelName', 'storeUploadNameType', 'customUrlSettings', 'storeAutoRetry', 'storeUploadMethod', 'storeUploadFolder']),
         ownerName() {
             return this.userConfig?.ownerName || 'Wenying'
         },
@@ -387,7 +388,8 @@ export default {
             return this.availableChannels[this.uploadChannel] || []
         }
     },
-    mounted() {
+    async mounted() {
+        await this.$store.dispatch('checkAdminSession')
         // 初始化背景图，启用自动创建元素
         this.initializeBackground('uploadBkImg', '.container', true, true)
 
@@ -498,11 +500,15 @@ export default {
             }
         },
         handleManage() {
-            this.$router.push('/adminLogin')
+            this.openAdminLogin()
         },
         openAdminLogin() {
             this.showCompressDialog = false
-            this.$router.push('/adminLogin')
+            if (this.adminLoggedIn) {
+                this.$router.push('/dashboard')
+                return
+            }
+            this.$router.push({ path: '/adminLogin', query: { redirect: '/dashboard' } })
         },
         // 解析布尔值
         parseBoolean(value, defaultValue) {

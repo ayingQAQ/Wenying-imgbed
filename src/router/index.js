@@ -5,48 +5,20 @@ import axios from '@/utils/axios'
 import i18n from '@/locales'
 
 // 通用的管理员认证守卫
-const adminAuthGuard = (to, from, next) => {
-  axios.get('/api/auth/sessionCheck', {
-    withCredentials: true
-  }).then(res => {
-    const data = res.data || {}
+const adminAuthGuard = async (to, from, next) => {
+  const wasLoggedIn = store.state.adminLoggedIn
+  const loggedIn = await store.dispatch('checkAdminSession')
+  if (loggedIn) {
+    return next()
+  }
 
-    // 不需要管理端认证，直接放行
-    if (!data.adminRequired) {
-      store.commit('setAdminLoggedIn', true)
-      return next()
+  if (to.name !== 'adminLogin') {
+    if (wasLoggedIn) {
+      ElMessage.error(i18n.global.t('login.authRequired'))
     }
-
-    // 需要认证，检查是否有有效的 admin session
-    if (data.valid && data.authType === 'admin') {
-      store.commit('setAdminLoggedIn', true)
-      return next()
-    }
-
-    // 需要认证但没有有效 session，跳转登录
-    // 只有之前已登录（session 过期）才提示错误，首次未登录静默跳转
-    const wasLoggedIn = store.state.adminLoggedIn
-    store.commit('setAdminLoggedIn', false)
-    if (to.name !== 'adminLogin') {
-      if (wasLoggedIn) {
-        ElMessage.error(i18n.global.t('login.authRequired'))
-      }
-      next({ name: 'adminLogin' })
-    } else {
-      next()
-    }
-  }).catch(() => {
-    const wasLoggedIn = store.state.adminLoggedIn
-    store.commit('setAdminLoggedIn', false)
-    if (to.name !== 'adminLogin') {
-      if (wasLoggedIn) {
-        ElMessage.error(i18n.global.t('login.authRequired'))
-      }
-      next({ name: 'adminLogin' })
-    } else {
-      next()
-    }
-  })
+    return next({ name: 'adminLogin', query: { redirect: to.fullPath } })
+  }
+  next()
 }
 
 // 通用的用户认证守卫

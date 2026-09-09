@@ -157,7 +157,9 @@
         <div class="dialog-action">
             <el-button @click="$emit('admin-login')">
                 <font-awesome-icon icon="sign-in-alt" />
-                {{ $i18n.locale === 'zh-CN' ? '管理员登录' : 'Administrator login' }}
+                {{ adminLoggedIn
+                    ? ($i18n.locale === 'zh-CN' ? '管理员已登录' : 'Administrator signed in')
+                    : ($i18n.locale === 'zh-CN' ? '管理员登录' : 'Administrator login') }}
             </el-button>
             <el-button type="primary" @click="visible = false" class="confirm-btn">{{ $t('uploadSettings.confirm') }}</el-button>
         </div>
@@ -229,7 +231,8 @@ export default {
         customerCompress: { type: Boolean, default: true },
         compressBar: { type: Number, default: 5 },
         compressQuality: { type: Number, default: 4 },
-        serverCompress: { type: Boolean, default: true }
+        serverCompress: { type: Boolean, default: true },
+        adminLoggedIn: { type: Boolean, default: false }
     },
     emits: [
         'update:modelValue',

@@ -24,8 +24,12 @@ export default {
     components: {
         BaseLogin
     },
-    created() {
+    async created() {
         this.updateLoginFields();
+        const loggedIn = await this.$store.dispatch('checkAdminSession');
+        if (loggedIn) {
+            this.redirectAfterLogin();
+        }
     },
     watch: {
         '$i18n.locale'() {
@@ -74,7 +78,7 @@ export default {
                     // 认证成功，标记已登录状态（不再存储密码）
                     // 会话 Token 已通过 HttpOnly Cookie 由后端设置
                     this.$store.commit('setAdminLoggedIn', true);
-                    this.$router.push('/dashboard');
+                    this.redirectAfterLogin();
                 } else {
                     const error = result.error || new Error('Unknown error');
                     this.isLoading = false;
@@ -89,6 +93,13 @@ export default {
                 this.isLoading = false;
                 this.$message.error(this.$t('login.systemError'));
             }
+        },
+        redirectAfterLogin() {
+            const redirect = this.$route.query.redirect;
+            const safeRedirect = typeof redirect === 'string' && redirect.startsWith('/') && !redirect.startsWith('//')
+                ? redirect
+                : '/dashboard';
+            this.$router.replace(safeRedirect);
         }
     }
 }
