@@ -1914,7 +1914,7 @@ beforeDestroy() {
     align-items: center;
     height: var(--upload-card-height);
     border-radius: 15px;
-    border: 1px solid var(--glass-border);
+    border: var(--el-upload-dragger-border);
     opacity: 0.7;
     background-color: var(--glass-bg);
     backdrop-filter: blur(20px) saturate(1.4);
@@ -1922,16 +1922,19 @@ beforeDestroy() {
     box-shadow: var(--glass-shadow);
     transition: height 0.3s ease, opacity 0.25s ease, border-color 0.25s ease, box-shadow 0.25s ease, background-color 0.25s ease;
 }
-:deep(.el-upload:focus .el-upload-dragger) {
+:deep(.el-upload:focus .el-upload-dragger),
+:deep(.el-upload:focus-within .el-upload-dragger) {
     border-color: var(--glass-border-hover);
 }
 :deep(.el-upload-dragger:hover) {
-    opacity: 0.7;
-    box-shadow: var(--glass-shadow);
+    opacity: 0.8;
+    border-color: var(--glass-border-hover);
+    box-shadow: var(--el-upload-dragger-hover-box-shadow);
 }
 :deep(.el-upload-dragger.is-dragover) {
-    opacity: 0.7;
-    box-shadow: var(--glass-shadow);
+    opacity: 0.8;
+    border-color: var(--glass-border-hover);
+    box-shadow: var(--el-upload-dragger-hover-box-shadow);
 }
 .is-uploading :deep(.el-upload-dragger) {
     border-color: transparent !important;
@@ -2629,6 +2632,37 @@ html.dark .el-upload__text :deep(em) {
     /* 操作组保持完整不被压缩 */
     .upload-list-dashboard-action {
         flex-shrink: 0;
+    }
+}
+
+/* 可用高度较小的桌面视口：让收缩列表与内部工具栏保持舒适留白。 */
+@media (min-width: 769px) and (max-height: 1050px) {
+    .upload-list-dashboard {
+        padding: 0 12px;
+    }
+
+    .modern-action-group,
+    .upload-list-dashboard-title {
+        height: 34px;
+    }
+
+    .modern-action-group {
+        gap: 3px;
+        padding: 3px;
+        border-radius: 10px;
+    }
+
+    .modern-action-btn {
+        width: 28px;
+        height: 28px;
+        border-radius: 8px;
+        font-size: 12px;
+    }
+
+    .upload-list-dashboard-title {
+        padding: 0 10px;
+        border-radius: 10px;
+        font-size: 13px;
     }
 }
 

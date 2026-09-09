@@ -1194,6 +1194,7 @@ html.dark .upload-folder:hover :deep(.el-input__wrapper) {
     color: var(--upload-title-text-color);
     text-shadow: var(--upload-title-text-shadow);
     position: relative;
+    isolation: isolate;
     padding-bottom: 8px;
     cursor: pointer;
     transition: transform 0.4s cubic-bezier(0.4, 0, 0.2, 1), filter 0.25s ease;
@@ -1210,6 +1211,7 @@ html.dark .upload-folder:hover :deep(.el-input__wrapper) {
     bottom: 0;
     left: 50%;
     transform: translateX(-50%);
+    z-index: 0;
     width: 0;
     height: 3px;
     background: var(--upload-title-underline-bg);
@@ -1227,15 +1229,20 @@ html.dark .upload-folder:hover :deep(.el-input__wrapper) {
     display: inline-block;
     position: relative;
     filter: drop-shadow(0 0 8px rgba(255, 255, 255, 0.3));
+}
+
+.title-base-text {
+    position: relative;
+    z-index: 1;
+    display: inline-block;
     transition: opacity 0.16s ease;
 }
 
-.title:hover .main-title {
+.title:hover .title-base-text {
     opacity: 0;
 }
 
 .title:hover {
-    color: transparent;
     text-shadow: none;
 }
 
@@ -1257,7 +1264,7 @@ html.dark .upload-folder:hover :deep(.el-input__wrapper) {
         -1.7px -0.6px 0 var(--upload-title-crayon-dust);
     transform: translateX(-50%) rotate(-0.8deg);
     transform-origin: left 68%;
-    clip-path: inset(-10px 100% -10px -10px);
+    clip-path: inset(-10px 100% -24px -10px);
     filter: saturate(1.08) contrast(1.06);
 }
 
@@ -1282,26 +1289,26 @@ html.dark .upload-folder:hover :deep(.el-input__wrapper) {
 @keyframes crayonWrite {
     0% {
         opacity: 0;
-        clip-path: inset(-10px 100% -10px -10px);
+        clip-path: inset(-10px 100% -24px -10px);
     }
     12% {
         opacity: 0.92;
     }
     32% {
-        clip-path: inset(-10px 68% -10px -10px);
+        clip-path: inset(-10px 68% -24px -10px);
     }
     47% {
-        clip-path: inset(-10px 52% -10px -10px);
+        clip-path: inset(-10px 52% -24px -10px);
     }
     63% {
-        clip-path: inset(-10px 34% -10px -10px);
+        clip-path: inset(-10px 34% -24px -10px);
     }
     78% {
-        clip-path: inset(-10px 18% -10px -10px);
+        clip-path: inset(-10px 18% -24px -10px);
     }
     100% {
         opacity: 0.92;
-        clip-path: inset(-10px -10px -10px -10px);
+        clip-path: inset(-10px -10px -24px -10px);
     }
 }
 
@@ -1345,11 +1352,32 @@ html.dark .upload-folder:hover :deep(.el-input__wrapper) {
     }
     .title {
         margin: 0.4em 0;
-        padding-bottom: 3px;
+        padding-bottom: 0.45em;
         line-height: 1.2;
     }
     .upload {
         top: -3.8vh;
+    }
+}
+
+/* 可用高度较小的桌面视口：减少标题占用和上传区上方留白。 */
+@media (min-width: 769px) and (max-height: 1050px) {
+    .header {
+        padding: 8px 15px;
+        margin-top: 3vh;
+        top: -2vh;
+    }
+
+    .title {
+        margin: 0.45em 0;
+        padding-bottom: 0.45em;
+        font-size: 1.875rem;
+        line-height: 1.2;
+        letter-spacing: 2px;
+    }
+
+    .upload {
+        top: -2.5vh;
     }
 }
 

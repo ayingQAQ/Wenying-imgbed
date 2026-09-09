@@ -1924,6 +1924,7 @@ methods: {
     
     // 进入文件夹
     enterFolder(folderPath) {
+        this.currentPage = 1;
         // 确保路径末尾有 '/'
         this.currentPath = folderPath + (folderPath.endsWith('/') ? '' : '/');
         // 刷新文件列表，到指定currentPath下
@@ -1932,6 +1933,7 @@ methods: {
     
     // 导航到指定文件夹
     navigateToFolder(path) {
+        this.currentPage = 1;
         // 确保空路径时不添加 '/'
         this.currentPath = path ? (path + (path.endsWith('/') ? '' : '/')) : '';
         // 刷新文件列表，到指定currentPath下
