@@ -53,7 +53,8 @@
             v-else-if="isImage"
             :preview-teleported="true" 
             :src="fileLink" 
-            :preview-src-list="previewSrcList" 
+            :preview-src-list="previewSrcList"
+            :initial-index="previewIndex"
             fit="cover" 
             lazy 
             decoding="async"
@@ -123,6 +124,7 @@ export default {
         selected: { type: Boolean, default: false },
         fileLink: { type: String, required: true },
         previewSrcList: { type: Array, default: () => [] },
+        previewIndex: { type: Number, default: 0 },
         disableTooltip: { type: Boolean, default: false }
     },
     emits: ['update:selected', 'detail', 'copy', 'move', 'delete', 'download', 'touchstart', 'touchend', 'touchmove'],

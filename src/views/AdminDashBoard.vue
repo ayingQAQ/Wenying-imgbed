@@ -200,7 +200,8 @@
                         :item="item"
                         v-model:selected="item.selected"
                         :fileLink="getFileLink(item.name)"
-                        :previewSrcList="item.previewSrcList"
+                        :previewSrcList="pagePreview.urls"
+                        :previewIndex="pagePreview.indices.get(item.name) || 0"
                         :disableTooltip="disableTooltip"
                         @detail="openDetailDialog(index, item.name)"
                         @copy="handleCopy(index, item.name)"
@@ -446,6 +447,7 @@
 <script>
 import { mapGetters } from 'vuex';
 import JSZip from 'jszip';
+import { buildPreviewList } from '@/utils/dashboard/previewList';
 import DashboardTabs from '@/components/DashboardTabs.vue';
 import TagManagementDialog from '@/components/dashboard/TagManagementDialog.vue';
 import BatchTagDialog from '@/components/dashboard/BatchTagDialog.vue';
@@ -614,14 +616,6 @@ computed: {
         const start = (this.currentPage - 1) * this.pageSize;
         const end = start + this.pageSize;
         let data = sortedData.slice(start, end);
-        // 增加previewSrcList属性，用于预览图片
-        const fullList = data.filter(file => this.isImage(file)).map(file => this.getFileLink(file.name));
-        data.forEach(file => {
-            if (this.isImage(file)) {
-                // 重新排序，索引大于等于当前索引的元素在前，否则在后
-                file.previewSrcList = fullList.slice(fullList.indexOf(this.getFileLink(file.name))).concat(fullList.slice(0, fullList.indexOf(this.getFileLink(file.name))));
-            }
-        });
         // 增加channelTag属性，用于显示渠道信息
         data.forEach(file => {
             if (file.metadata?.Channel === 'TelegramNew' || file.metadata?.Channel === 'Telegram') {
@@ -643,6 +637,9 @@ computed: {
             }
         });
         return data;
+    },
+    pagePreview() {
+        return buildPreviewList(this.paginatedTableData, file => this.isImage(file), name => this.getFileLink(name));
     },
     sortLabel() {
         const labelKeys = {
