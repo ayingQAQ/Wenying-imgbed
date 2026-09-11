@@ -19,6 +19,7 @@
                 :class="{'is-uploading': uploading, 'upload-card-busy': fileList.length}"
                 drag
                 multiple
+                :accept="mobileMediaAccept"
                 :http-request="uploadFile"
                 :onSuccess="handleSuccess"
                 :on-error="handleError"
@@ -124,7 +125,7 @@
                                     </button>
                                 </el-tooltip>
                                 <el-tooltip :disabled="disableTooltip" :content="$t('upload.retryFailed')" placement="top" :show-after="1000">
-                                    <el-dropdown>
+                                    <el-dropdown popper-class="upload-actions-popper">
                                         <button class="modern-action-btn modern-action-btn-retry" :aria-label="$t('upload.retryFailed')" @click="retryError">
                                             <font-awesome-icon icon="redo" />
                                         </button>
@@ -141,7 +142,7 @@
                                     </el-dropdown>
                                 </el-tooltip>
                                 <el-tooltip :disabled="disableTooltip" :content="$t('upload.clearList')" placement="top" :show-after="1000">
-                                    <el-dropdown>
+                                    <el-dropdown popper-class="upload-actions-popper">
                                         <button class="modern-action-btn modern-action-btn-danger" :aria-label="$t('upload.clearList')">
                                             <font-awesome-icon icon="trash-alt" />
                                         </button>
@@ -172,6 +173,7 @@
 
 <script>
 import axios from '@/utils/axios'
+import { ElMessageBox } from 'element-plus'
 import { resumeTelegramBackup } from '@/utils/upload/telegramBackup'
 import * as imageConversion from 'image-conversion'
 import { mapGetters } from 'vuex'
@@ -291,6 +293,9 @@ data() {
         backupControllers: new Map(),
         abortControllers: new Map(), // 存储每个文件的 AbortController
         pasteFocusTarget: null,
+        mobileViewport: window.matchMedia('(max-width: 768px)').matches,
+        mobileUploadConfirmation: null,
+        mobileConfirmationTimer: null,
     }
 },
 watch: {
@@ -355,6 +360,9 @@ computed: {
         const platform = navigator.userAgentData?.platform || navigator.platform || ''
         return /mac|iphone|ipad|ipod/i.test(platform) ? 'Cmd + V' : 'Ctrl + V'
     },
+    mobileMediaAccept() {
+        return this.mobileViewport ? 'image/*,video/*' : ''
+    },
     rootUrl() {
         // 链接前缀，优先级：用户自定义 > urlPrefix > 默认
         const fallback = this.urlPrefix || `${window.location.protocol}//${window.location.host}/file/`
@@ -372,18 +380,48 @@ mounted() {
     document.addEventListener('paste', this.handlePaste)
     document.addEventListener('keydown', this.handlePasteShortcut)
     this.autoReUpload = this.storeAutoReUpload
+    window.addEventListener('resize', this.updateMobileViewport)
 },
 beforeUnmount() {
     for (const controller of this.backupControllers.values()) controller.abort()
     this.backupControllers.clear()
     document.removeEventListener('paste', this.handlePaste)
     document.removeEventListener('keydown', this.handlePasteShortcut)
+    window.removeEventListener('resize', this.updateMobileViewport)
+    clearTimeout(this.mobileConfirmationTimer)
     // 清理状态
     this.uploadQueue = []
     this.fileList = []
     this.activeUploads = 0
 },
 methods: {
+    updateMobileViewport() {
+        this.mobileViewport = window.matchMedia('(max-width: 768px)').matches
+    },
+    confirmMobileUpload() {
+        if (!this.mobileViewport) return Promise.resolve(true)
+        if (this.mobileUploadConfirmation) return this.mobileUploadConfirmation
+        this.mobileUploadConfirmation = ElMessageBox.confirm(
+            '确认上传刚才选择的文件？',
+            '确认上传',
+            {
+                confirmButtonText: '确认上传',
+                cancelButtonText: '取消',
+                type: 'info',
+                customClass: 'mobile-upload-confirm',
+                closeOnClickModal: false,
+                distinguishCancelAndClose: true,
+            }
+        ).then(() => true).catch(() => false)
+        this.mobileUploadConfirmation.finally(() => {
+            clearTimeout(this.mobileConfirmationTimer)
+            // 多选文件会连续触发 beforeUpload；短暂复用一次确认结果，避免逐张弹窗。
+            this.mobileConfirmationTimer = setTimeout(() => {
+                this.mobileUploadConfirmation = null
+            }, 1200)
+        })
+        return this.mobileUploadConfirmation
+    },
     createLocalUid() {
         this.localUidCounter += 1
         return `local-${Date.now()}-${this.localUidCounter}`
@@ -999,6 +1037,10 @@ methods: {
     },
     beforeUpload(file) {
         return new Promise(async (resolve, reject) => {
+            if (!await this.confirmMobileUpload()) {
+                reject(new Error('upload_cancelled'))
+                return
+            }
             let processedFile = file
             
             // WebP 转换：在压缩之前进行
@@ -2666,6 +2708,41 @@ html.dark .el-upload__text :deep(em) {
     }
 }
 
+</style>
+<style>
+@media (max-width: 768px) {
+    .mobile-upload-confirm {
+        width: min(88vw, 360px) !important;
+        max-width: calc(100vw - 32px);
+        border-radius: 14px;
+    }
+
+    .mobile-upload-confirm .el-message-box__content {
+        padding: 18px 20px 14px;
+        text-align: center;
+    }
+
+    .mobile-upload-confirm .el-message-box__btns {
+        justify-content: center;
+        gap: 8px;
+        padding: 10px 20px 18px;
+    }
+
+    .upload-actions-popper {
+        max-width: calc(100vw - 24px);
+    }
+
+    .upload-actions-popper .el-dropdown-menu {
+        min-width: 132px;
+        padding: 6px;
+    }
+
+    .upload-actions-popper .el-dropdown-menu__item {
+        justify-content: center;
+        border-radius: 8px;
+        white-space: nowrap;
+    }
+}
 </style>
 <style scoped>
 .upload-form { --upload-card-height: 320px; --upload-card-busy-height: 136px; --upload-list-height: 64px; --upload-list-gap: 16px; --upload-list-radius: 12px; width: 100%; }
