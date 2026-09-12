@@ -133,6 +133,8 @@
                         </el-dropdown-menu>
                     </template>
                 </el-dropdown>
+                <button class="breadcrumb-sort-button directory-action" :disabled="!currentPath" @click="handleGoBack" title="返回上一级">↑ 上一级</button>
+                <button class="breadcrumb-sort-button directory-action" @click="createSubfolder" title="在当前目录新建文件夹">＋ 新建文件夹</button>
                 <!-- 移动端目录按钮 -->
                 <div class="mobile-directory-trigger" @click="showMobileDirectoryDrawer = true">
                     <font-awesome-icon icon="folder-open" class="mobile-directory-icon"/>
@@ -846,6 +848,23 @@ methods: {
             case 'tag':
                 this.handleTagManagement(file.name);
                 break;
+        }
+    },
+    async createSubfolder() {
+        try {
+            const { value } = await this.$prompt('请输入子文件夹名称', '新建文件夹', {
+                confirmButtonText: '创建', cancelButtonText: '取消',
+                inputValidator: value => !!value?.trim() && !/[\\/]/.test(value) && !['.', '..'].includes(value.trim()) || '请输入有效的单层文件夹名称'
+            });
+            const path = [this.currentPath.replace(/\/+$/, ''), value.trim()].filter(Boolean).join('/');
+            const response = await fetchWithAuth('/api/manage/directories', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ path })
+            });
+            if (!response.ok) throw new Error((await response.json()).error || '创建失败');
+            await this.refreshFileList();
+            this.$message.success('文件夹已创建');
+        } catch (error) {
+            if (error !== 'cancel' && error !== 'close') this.$message.error(error.message || '创建失败');
         }
     },
     // 返回上一级目录
@@ -2209,8 +2228,14 @@ beforeUnmount() {
 };
 </script>
 
-<style src="@/styles/settings-dialog.css"></style>
-<style scoped src="@/styles/admin-common.css"></style>
+<style src="@/styles/settings-dialog.css">.breadcrumb-container { flex-wrap: wrap; }
+.breadcrumb-sort-button.directory-action { width: auto; flex: 0 0 auto; padding: 0 10px; white-space: nowrap; }
+.directory-action:disabled { opacity: .45; cursor: default; }
+</style>
+<style scoped src="@/styles/admin-common.css">.breadcrumb-container { flex-wrap: wrap; }
+.breadcrumb-sort-button.directory-action { width: auto; flex: 0 0 auto; padding: 0 10px; white-space: nowrap; }
+.directory-action:disabled { opacity: .45; cursor: default; }
+</style>
 
 <style scoped>
 .container {
@@ -2911,4 +2936,7 @@ beforeUnmount() {
     margin-left: 16px;
 }
 
+.breadcrumb-container { flex-wrap: wrap; }
+.breadcrumb-sort-button.directory-action { width: auto; flex: 0 0 auto; padding: 0 10px; white-space: nowrap; }
+.directory-action:disabled { opacity: .45; cursor: default; }
 </style>
