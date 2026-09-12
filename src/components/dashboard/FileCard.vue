@@ -49,31 +49,18 @@
         </div>
         
         <!-- 图片预览 -->
-        <el-image 
+        <MemoryThumbnail
             v-else-if="isImage"
             @click="previewOpen = true"
             :src="fileLink" 
-            fit="cover" 
-            lazy 
-            decoding="async"
             class="image-preview"
-        >
-            <template #placeholder>
-                <div class="skeleton-wrapper"></div>
-            </template>
-            <template #error>
-                <div class="error-wrapper" @click.stop="$emit('detail')">
-                    <font-awesome-icon icon="image" class="error-icon"/>
-                    <span class="error-text">{{ $t('dashboard.loadFailed') }}</span>
-                </div>
-            </template>
-        </el-image>
-        <OriginalImageViewer v-if="previewOpen" :urls="previewSrcList" :initial-index="previewIndex" @close="previewOpen = false" />
+        />
         
         <!-- 其他文件 -->
         <div v-else class="file-preview">
             <font-awesome-icon icon="file" class="file-icon"/>
         </div>
+        <OriginalImageViewer v-if="previewOpen" :urls="previewSrcList" :initial-index="previewIndex" @close="previewOpen = false" />
         
         <!-- 底部覆盖层 -->
         <div class="card-bottom-overlay">
@@ -117,9 +104,10 @@
 
 <script>
 import OriginalImageViewer from './OriginalImageViewer.vue'
+import MemoryThumbnail from './MemoryThumbnail.vue'
 export default {
     name: 'FileCard',
-    components: { OriginalImageViewer },
+    components: { OriginalImageViewer, MemoryThumbnail },
     props: {
         item: { type: Object, required: true },
         selected: { type: Boolean, default: false },
@@ -240,8 +228,6 @@ export default {
     contain: layout paint style;
     contain-intrinsic-size: 260px;
     background-color: var(--glass-bg) !important;
-    backdrop-filter: blur(20px) saturate(1.4);
-    -webkit-backdrop-filter: blur(20px) saturate(1.4);
     border: 1px solid var(--glass-border);
     border-radius: 8px;
     box-shadow: var(--admin-dashboard-imgcard-shadow);

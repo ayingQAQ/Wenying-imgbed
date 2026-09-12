@@ -22,7 +22,7 @@
                 <video :src="fileLink" class="list-preview-img" muted preload="metadata"></video>
             </template>
             <template v-else-if="isImage">
-                <img :src="fileLink" class="list-preview-img" loading="lazy" decoding="async" />
+                <MemoryThumbnail :src="fileLink" class="list-preview-img" />
             </template>
             <template v-else>
                 <font-awesome-icon icon="file" class="list-file-icon"/>
@@ -111,8 +111,10 @@
 </template>
 
 <script>
+import MemoryThumbnail from './MemoryThumbnail.vue';
 export default {
     name: 'FileListItem',
+    components: { MemoryThumbnail },
     props: {
         item: { type: Object, required: true },
         selected: { type: Boolean, default: false },
