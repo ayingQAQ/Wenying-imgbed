@@ -1182,6 +1182,9 @@ methods: {
 
         Promise.all(promises)
             .then(results => {
+                if (results.some(response => !response.ok)) {
+                    throw new Error('Move request failed');
+                }
                 let successNum = 0;
                 results.forEach((response, index) => {
                     if (response.ok) {
@@ -1549,7 +1552,10 @@ methods: {
             .then(() => {
                 this.refreshLocalFileList();
             })
-            .catch(() => this.$message.error(this.$t('dashboard.moveFailed')));
+            .catch(() => {
+                this.refreshFileList();
+                this.$message.error(this.$t('dashboard.moveFailed'));
+            });
     },
     // 执行批量移动
     executeBatchMove(newPath) {
@@ -1590,7 +1596,10 @@ methods: {
             .then(() => {
                 this.refreshLocalFileList();
             })
-            .catch(() => this.$message.error(this.$t('dashboard.moveFailed')));
+            .catch(() => {
+                this.refreshFileList();
+                this.$message.error(this.$t('dashboard.moveFailed'));
+            });
     },
     handleBatchBlock(){
         this.$confirm(this.$t('dashboard.batchBlockConfirm'), this.$t('dashboard.deleteConfirmTitle'), {
