@@ -199,7 +199,7 @@
                         v-else
                         :item="item"
                         v-model:selected="item.selected"
-                        :fileLink="getFileLink(item.name)"
+                        :fileLink="getDisplayImageLink(item, 'grid')"
                         :previewSrcList="pagePreview.urls"
                         :previewIndex="pagePreview.indices.get(item.name) || 0"
                         :disableTooltip="disableTooltip"
@@ -447,7 +447,7 @@
 <script>
 import { mapGetters } from 'vuex';
 import JSZip from 'jszip';
-import { buildPreviewList } from '@/utils/dashboard/previewList';
+import { buildDisplayImageUrl, buildPreviewList } from '@/utils/dashboard/previewList';
 import DashboardTabs from '@/components/DashboardTabs.vue';
 import TagManagementDialog from '@/components/dashboard/TagManagementDialog.vue';
 import BatchTagDialog from '@/components/dashboard/BatchTagDialog.vue';
@@ -639,7 +639,11 @@ computed: {
         return data;
     },
     pagePreview() {
-        return buildPreviewList(this.paginatedTableData, file => this.isImage(file), name => this.getFileLink(name));
+        return buildPreviewList(
+            this.paginatedTableData,
+            file => this.isImage(file),
+            name => this.getFileLink(name)
+        );
     },
     sortLabel() {
         const labelKeys = {
@@ -1692,6 +1696,10 @@ methods: {
     getFileLink(filename) {
         const fileLink = process.env.NODE_ENV === 'production' ? `/file/${filename}?from=admin` : `/api/file/${filename}?from=admin`;
         return fileLink;
+    },
+    getDisplayImageLink(file, preset) {
+        const original = this.getFileLink(file.name);
+        return this.isImage(file) ? buildDisplayImageUrl(original, preset) : original;
     },
     handlePageChange(page) {
         this.currentPage = page;

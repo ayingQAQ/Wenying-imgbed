@@ -51,10 +51,8 @@
         <!-- 图片预览 -->
         <el-image 
             v-else-if="isImage"
-            :preview-teleported="true" 
+            @click="previewOpen = true"
             :src="fileLink" 
-            :preview-src-list="previewSrcList"
-            :initial-index="previewIndex"
             fit="cover" 
             lazy 
             decoding="async"
@@ -70,6 +68,7 @@
                 </div>
             </template>
         </el-image>
+        <OriginalImageViewer v-if="previewOpen" :urls="previewSrcList" :initial-index="previewIndex" @close="previewOpen = false" />
         
         <!-- 其他文件 -->
         <div v-else class="file-preview">
@@ -117,8 +116,10 @@
 </template>
 
 <script>
+import OriginalImageViewer from './OriginalImageViewer.vue'
 export default {
     name: 'FileCard',
+    components: { OriginalImageViewer },
     props: {
         item: { type: Object, required: true },
         selected: { type: Boolean, default: false },
@@ -130,6 +131,7 @@ export default {
     emits: ['update:selected', 'detail', 'copy', 'move', 'delete', 'download', 'touchstart', 'touchend', 'touchmove'],
     data() {
         return {
+            previewOpen: false,
             localSelected: this.selected,
             videoLoading: true,
             videoError: false
