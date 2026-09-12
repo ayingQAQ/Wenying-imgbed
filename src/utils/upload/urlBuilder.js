@@ -10,14 +10,16 @@
  * @param {string} rootUrl - 链接前缀
  * @returns {{ finalURL: string, mdURL: string, htmlURL: string, ubbURL: string }}
  */
+import { publicFileId } from '../publicFileId';
+
 export function buildFileUrls(srcID, name, rootUrl) {
     const prefix = String(rootUrl || '').replace(/\/+$/, '')
     const id = String(srcID || '').replace(/^\/+/, '')
-    const url = `${prefix}/${id}`
+    const url = `${prefix}/${publicFileId(id)}`
     return {
         finalURL: url,
-        mdURL: `![${name}](${url})`,
-        htmlURL: `<img src="${url}" alt="${name}" width=100% />`,
+        mdURL: `![图片](${url})`,
+        htmlURL: `<img src="${url}" alt="图片" width=100% />`,
         ubbURL: `[img]${url}[/img]`
     }
 }

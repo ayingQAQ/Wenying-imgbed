@@ -451,6 +451,7 @@ import { mapGetters } from 'vuex';
 import JSZip from 'jszip';
 import { buildDisplayImageUrl, buildPreviewList } from '@/utils/dashboard/previewList';
 import { directoryFromRoute, directoryRouteQuery } from '@/utils/dashboard/directoryRoute';
+import { publicFileId } from '@/utils/publicFileId';
 import DashboardTabs from '@/components/DashboardTabs.vue';
 import TagManagementDialog from '@/components/dashboard/TagManagementDialog.vue';
 import BatchTagDialog from '@/components/dashboard/BatchTagDialog.vue';
@@ -688,10 +689,10 @@ computed: {
             }
         } else {
             return {
-                'originUrl': `${this.rootUrl}${this.detailFile?.name}`,
-                'mdUrl': `![${this.detailFile?.metadata?.FileName || this.detailFile?.name}](${this.rootUrl}${this.detailFile?.name})`,
-                'htmlUrl': `<img src="${this.rootUrl}${this.detailFile?.name}" alt="${this.detailFile?.metadata?.FileName || this.detailFile?.name}" width=100%>`,
-                'bbUrl': `[img]${this.rootUrl}${this.detailFile?.name}[/img]`,
+                'originUrl': `${this.rootUrl}${publicFileId(this.detailFile?.name)}`,
+                'mdUrl': `![图片](${this.rootUrl}${publicFileId(this.detailFile?.name)})`,
+                'htmlUrl': `<img src="${this.rootUrl}${publicFileId(this.detailFile?.name)}" alt="图片" width=100%>`,
+                'bbUrl': `[img]${this.rootUrl}${publicFileId(this.detailFile?.name)}[/img]`,
                 'tgId': this.detailFile?.metadata?.TgFileId || this.$t('fileDetail.unknown'),
                 'S3Location': this.detailFile?.metadata?.S3Location || this.$t('fileDetail.unknown'),
                 'S3CdnFileUrl': this.detailFile?.metadata?.S3CdnFileUrl || this.$t('fileDetail.unknown')
@@ -1302,16 +1303,16 @@ methods: {
         } else {
             switch (this.defaultUrlFormat) {
                 case 'originUrl':
-                    text = `${this.rootUrl}${key}`;
+                    text = `${this.rootUrl}${publicFileId(key)}`;
                     break;
                 case 'mdUrl':
-                    text = `![${this.paginatedTableData[index].metadata?.FileName || key}](${this.rootUrl}${key})`;
+                    text = `![图片](${this.rootUrl}${publicFileId(key)})`;
                     break;
                 case 'htmlUrl':
-                    text = `<img src="${this.rootUrl}${key}" alt="${this.paginatedTableData[index].metadata?.FileName || key}" width=100%>`;
+                    text = `<img src="${this.rootUrl}${publicFileId(key)}" alt="图片" width=100%>`;
                     break;
                 case 'bbUrl':
-                    text = `[img]${this.rootUrl}${key}[/img]`;
+                    text = `[img]${this.rootUrl}${publicFileId(key)}[/img]`;
                     break;
                 case 'tgId':
                     text = this.paginatedTableData[index].metadata?.TgFileId || 'none';
@@ -2123,8 +2124,8 @@ methods: {
     // 生成单个文件链接
     generateFileLink(key, metadata) {
         const isExternal = metadata?.Channel === 'External';
-        const baseUrl = isExternal ? metadata?.ExternalLink : `${this.rootUrl}${key}`;
-        const fileName = metadata?.FileName || key;
+        const baseUrl = isExternal ? metadata?.ExternalLink : `${this.rootUrl}${publicFileId(key)}`;
+        const fileName = isExternal ? (metadata?.FileName || key) : '图片';
         
         switch (this.defaultUrlFormat) {
             case 'originUrl':

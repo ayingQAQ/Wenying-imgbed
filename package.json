@@ -23,6 +23,7 @@
     "element-plus": "^2.8.2",
     "http-proxy-middleware": "^3.0.2",
     "image-conversion": "^2.1.1",
+    "js-sha256": "1.0.0",
     "jszip": "^3.10.1",
     "overlayscrollbars": "^2.13.0",
     "overlayscrollbars-vue": "^0.5.9",
