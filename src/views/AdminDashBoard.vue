@@ -690,8 +690,8 @@ computed: {
         } else {
             return {
                 'originUrl': `${this.rootUrl}${publicFileId(this.detailFile?.name)}`,
-                'mdUrl': `![图片](${this.rootUrl}${publicFileId(this.detailFile?.name)})`,
-                'htmlUrl': `<img src="${this.rootUrl}${publicFileId(this.detailFile?.name)}" alt="图片" width=100%>`,
+                'mdUrl': `![image](${this.rootUrl}${publicFileId(this.detailFile?.name)})`,
+                'htmlUrl': `<img src="${this.rootUrl}${publicFileId(this.detailFile?.name)}" alt="image" width=100%>`,
                 'bbUrl': `[img]${this.rootUrl}${publicFileId(this.detailFile?.name)}[/img]`,
                 'tgId': this.detailFile?.metadata?.TgFileId || this.$t('fileDetail.unknown'),
                 'S3Location': this.detailFile?.metadata?.S3Location || this.$t('fileDetail.unknown'),
@@ -1309,10 +1309,10 @@ methods: {
                     text = `${this.rootUrl}${publicFileId(key)}`;
                     break;
                 case 'mdUrl':
-                    text = `![图片](${this.rootUrl}${publicFileId(key)})`;
+                    text = `![image](${this.rootUrl}${publicFileId(key)})`;
                     break;
                 case 'htmlUrl':
-                    text = `<img src="${this.rootUrl}${publicFileId(key)}" alt="图片" width=100%>`;
+                    text = `<img src="${this.rootUrl}${publicFileId(key)}" alt="image" width=100%>`;
                     break;
                 case 'bbUrl':
                     text = `[img]${this.rootUrl}${publicFileId(key)}[/img]`;
@@ -2134,7 +2134,7 @@ methods: {
     generateFileLink(key, metadata) {
         const isExternal = metadata?.Channel === 'External';
         const baseUrl = isExternal ? metadata?.ExternalLink : `${this.rootUrl}${publicFileId(key)}`;
-        const fileName = isExternal ? (metadata?.FileName || key) : '图片';
+        const fileName = isExternal ? (metadata?.FileName || key) : 'image';
         
         switch (this.defaultUrlFormat) {
             case 'originUrl':

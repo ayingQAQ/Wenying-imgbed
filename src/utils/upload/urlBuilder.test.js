@@ -8,8 +8,8 @@ describe('upload URL formatting', () => {
         const alias = `p_${createHash('sha256').update('guest/abc/image.png').digest('hex')}.png`
         const url = `https://imgb.top/file/${alias}`
         expect(result.finalURL).toBe(url)
-        expect(result.mdURL).toBe(`![图片](${url})`)
-        expect(result.htmlURL).toContain('alt="图片"')
+        expect(result.mdURL).toBe(`![image](${url})`)
+        expect(result.htmlURL).toContain('alt="image"')
         expect(result.htmlURL).toContain(`src="${url}"`)
         expect(result.ubbURL).toBe(`[img]${url}[/img]`)
         expect(buildFileUrls(alias, 'image.png', 'https://imgb.top/file/').finalURL).toBe(url)

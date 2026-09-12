@@ -18,8 +18,8 @@ export function buildFileUrls(srcID, name, rootUrl) {
     const url = `${prefix}/${publicFileId(id)}`
     return {
         finalURL: url,
-        mdURL: `![图片](${url})`,
-        htmlURL: `<img src="${url}" alt="图片" width=100% />`,
+        mdURL: `![image](${url})`,
+        htmlURL: `<img src="${url}" alt="image" width=100% />`,
         ubbURL: `[img]${url}[/img]`
     }
 }
