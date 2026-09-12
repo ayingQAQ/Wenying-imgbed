@@ -450,6 +450,7 @@
 import { mapGetters } from 'vuex';
 import JSZip from 'jszip';
 import { buildDisplayImageUrl, buildPreviewList } from '@/utils/dashboard/previewList';
+import { directoryFromRoute, directoryRouteQuery } from '@/utils/dashboard/directoryRoute';
 import DashboardTabs from '@/components/DashboardTabs.vue';
 import TagManagementDialog from '@/components/dashboard/TagManagementDialog.vue';
 import BatchTagDialog from '@/components/dashboard/BatchTagDialog.vue';
@@ -778,6 +779,13 @@ watch: {
     currentPath(val) {
         // 页面切换时，取消选择的内容
         this.tableData.forEach(file => file.selected = false);
+    },
+    '$route.query.dir'(value) {
+        const path = directoryFromRoute(value);
+        if (path === this.currentPath) return;
+        this.currentPage = 1;
+        this.currentPath = path;
+        this.refreshFileList();
     }
 },
 methods: {
@@ -1948,20 +1956,17 @@ methods: {
     
     // 进入文件夹
     enterFolder(folderPath) {
-        this.currentPage = 1;
-        // 确保路径末尾有 '/'
-        this.currentPath = folderPath + (folderPath.endsWith('/') ? '' : '/');
-        // 刷新文件列表，到指定currentPath下
-        this.refreshFileList();
+        this.navigateToFolder(folderPath);
     },
     
     // 导航到指定文件夹
     navigateToFolder(path) {
-        this.currentPage = 1;
-        // 确保空路径时不添加 '/'
-        this.currentPath = path ? (path + (path.endsWith('/') ? '' : '/')) : '';
-        // 刷新文件列表，到指定currentPath下
-        this.refreshFileList();
+        const dir = directoryRouteQuery(path);
+        const query = { ...this.$route.query };
+        if (dir) query.dir = dir;
+        else delete query.dir;
+        if (directoryFromRoute(query.dir) === this.currentPath) return;
+        this.$router.push({ name: 'dashboard', query });
     },
     
     // 获取文件列表
@@ -2193,6 +2198,7 @@ mounted() {
     this.updateResponsivePageSize();
     window.addEventListener('resize', this.updateResponsivePageSize);
 
+    this.currentPath = directoryFromRoute(this.$route.query.dir);
     this.loading = true;
     // 路由守卫已通过 /api/auth/sessionCheck 验证认证状态
     this.showLogoutButton = this.$store.state.adminLoggedIn;
@@ -2228,14 +2234,8 @@ beforeUnmount() {
 };
 </script>
 
-<style src="@/styles/settings-dialog.css">.breadcrumb-container { flex-wrap: wrap; }
-.breadcrumb-sort-button.directory-action { width: auto; flex: 0 0 auto; padding: 0 10px; white-space: nowrap; }
-.directory-action:disabled { opacity: .45; cursor: default; }
-</style>
-<style scoped src="@/styles/admin-common.css">.breadcrumb-container { flex-wrap: wrap; }
-.breadcrumb-sort-button.directory-action { width: auto; flex: 0 0 auto; padding: 0 10px; white-space: nowrap; }
-.directory-action:disabled { opacity: .45; cursor: default; }
-</style>
+<style src="@/styles/settings-dialog.css"></style>
+<style scoped src="@/styles/admin-common.css"></style>
 
 <style scoped>
 .container {
@@ -2936,7 +2936,19 @@ beforeUnmount() {
     margin-left: 16px;
 }
 
-.breadcrumb-container { flex-wrap: wrap; }
-.breadcrumb-sort-button.directory-action { width: auto; flex: 0 0 auto; padding: 0 10px; white-space: nowrap; }
-.directory-action:disabled { opacity: .45; cursor: default; }
+.breadcrumb-container {
+    flex-wrap: wrap;
+}
+
+.breadcrumb-sort-button.directory-action {
+    width: auto;
+    flex: 0 0 auto;
+    padding: 0 10px;
+    white-space: nowrap;
+}
+
+.directory-action:disabled {
+    opacity: .45;
+    cursor: default;
+}
 </style>
