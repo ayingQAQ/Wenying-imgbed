@@ -1,0 +1,417 @@
+import { runMaintenance } from '../../functions/utils/maintenance.js';
+import { createFunctionRouter } from './functionRouter.js';
+import { drainTelegramBackups } from '../../functions/utils/telegramBackup.js';
+/**
+ * Docker 模式下的原生 Node.js 服务器
+ * 使用 Hono 作为 Web 框架，代理 Cloudflare Pages Functions 请求
+ * 使用 SQLite 替代 D1，本地文件系统替代 R2
+ */
+
+import { Hono } from 'hono';
+import { serve } from '@hono/node-server';
+import { serveStatic } from '@hono/node-server/serve-static';
+import { getConnInfo } from '@hono/node-server/conninfo';
+import { existsSync, readFileSync, readdirSync, mkdirSync } from 'fs';
+import { join, resolve, dirname } from 'path';
+import { fileURLToPath, pathToFileURL } from 'url';
+import { SqliteD1 } from './sqliteD1.js';
+import { LocalR2Storage } from './r2Storage.js';
+import { RemoteD1 } from './remoteD1.js';
+import { publicRequest } from './public-request.js';
+import { publicFetch } from './public-fetch.js';
+import { RemoteR2Storage } from './remoteR2.js';
+import { S3R2Storage } from './s3R2.js';
+import { ORIGIN_CHANNEL_KEY, ORIGIN_CHANNEL_FIELDS } from '../../functions/utils/originChannels.js';
+import { dockerImageProcessor } from './imageProcessor.js';
+import { LocalListCache } from './listCache.js';
+import { ThumbnailCache } from './thumbnailCache.js';
+
+const NativeResponse = globalThis.Response;
+
+// ==================== 模拟 Cloudflare 全局 API ====================
+
+// 模拟 Cloudflare Cache API（Node.js 中不存在）
+if (typeof globalThis.caches === 'undefined') {
+    globalThis.caches = {
+        default: new LocalListCache(),
+    };
+}
+
+// ==================== 自引用 Fetch 拦截器 ====================
+// 解决 Docker 端口映射导致 functions 内部 fetch(url.origin + ...) 失败的问题
+// 不再重写请求 URL，而是拦截自引用的 fetch 调用，透明路由到内部端口
+// 这样 url.origin 保持为外部 origin，确保 Referer 匹配、返回链接、重定向等功能正常
+
+const selfOrigins = new Set();
+const originalFetch = globalThis.fetch;
+
+globalThis.fetch = async function(input, init) {
+    try {
+        let urlStr;
+        if (typeof input === 'string') {
+            urlStr = input;
+        } else if (input instanceof URL) {
+            urlStr = input.toString();
+        } else if (input instanceof Request) {
+            urlStr = input.url;
+        }
+
+        if (urlStr) {
+            const parsed = new URL(urlStr);
+            const internalOrigin = `http://localhost:${port}`;
+            // 如果目标 origin 是已知的外部自身 origin，重写为内部地址
+            if (parsed.origin !== internalOrigin && selfOrigins.has(parsed.origin)) {
+                const newUrl = `${internalOrigin}${parsed.pathname}${parsed.search}`;
+                if (input instanceof Request) {
+                    return originalFetch(new Request(newUrl, input), init);
+                }
+                return originalFetch(newUrl, init);
+            }
+        }
+    } catch (e) {
+        // URL 解析失败等异常，回退到原始 fetch
+        if (!(e instanceof TypeError)) {
+            console.error('Fetch interceptor error:', e.message);
+        }
+    }
+    return originalFetch(input, init);
+};
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const ROOT_DIR = resolve(__dirname, '../..');
+const FUNCTIONS_DIR = resolve(ROOT_DIR, 'functions');
+const functionRouter = createFunctionRouter(FUNCTIONS_DIR);
+const DATA_DIR = resolve(process.env.DATA_DIR || join(ROOT_DIR, 'data'));
+const port = parseInt(process.env.PORT || '8080', 10);
+
+// 确保数据目录存在
+mkdirSync(DATA_DIR, { recursive: true });
+
+// ==================== 初始化数据库 ====================
+
+const sqliteD1 = new SqliteD1(join(DATA_DIR, 'database.sqlite'));
+
+// 执行初始化 SQL
+const initSqlPath = join(ROOT_DIR, 'database', 'init.sql');
+if (existsSync(initSqlPath)) {
+    const initSql = readFileSync(initSqlPath, 'utf8');
+    try {
+        sqliteD1.exec(initSql);
+        console.log('Database initialized successfully');
+    } catch (e) {
+        console.log('Database init:', e.message);
+    }
+}
+
+// 执行数据库迁移
+const migrationsDir = join(ROOT_DIR, 'database', 'migrations');
+if (existsSync(migrationsDir)) {
+    const migrations = readdirSync(migrationsDir).filter(f => f.endsWith('.sql')).sort();
+    for (const migration of migrations) {
+        try {
+            const sql = readFileSync(join(migrationsDir, migration), 'utf8');
+            sqliteD1.exec(sql);
+            console.log(`Migration ${migration}: OK`);
+        } catch (e) {
+            // 忽略已执行的迁移（如列已存在等）
+            console.log(`Migration ${migration}: ${e.message}`);
+        }
+    }
+}
+
+// ==================== 初始化 R2 存储 ====================
+
+const r2Storage = new LocalR2Storage(join(DATA_DIR, 'r2'));
+const thumbnailCache = new ThumbnailCache(join(DATA_DIR, 'thumbnails'), 2 * 1024 * 1024 * 1024, 1024 * 1024, Infinity, true);
+const originalCache = new ThumbnailCache(join(DATA_DIR, 'original-cache'), 512 * 1024 * 1024, 8 * 1024 * 1024, 5 * 60 * 1000);
+
+const remoteStateConfigured = Boolean(process.env.STATE_GATEWAY_URL && process.env.STATE_GATEWAY_SECRET);
+const sharedD1 = remoteStateConfigured
+    ? new RemoteD1(process.env.STATE_GATEWAY_URL, process.env.STATE_GATEWAY_SECRET)
+    : sqliteD1;
+const sharedR2 = remoteStateConfigured
+    ? new RemoteR2Storage(process.env.STATE_GATEWAY_URL, process.env.STATE_GATEWAY_SECRET)
+    : process.env.R2_S3_ENDPOINT ? new S3R2Storage(process.env) : r2Storage;
+
+// ==================== 创建环境对象 ====================
+let originChannels = {};
+async function refreshOriginChannels() {
+    if (!remoteStateConfigured) return;
+    const row = await sharedD1.prepare('SELECT value FROM settings WHERE key = ?').bind(ORIGIN_CHANNEL_KEY).first();
+    if (!row) throw new Error('Shared origin channel configuration is missing');
+    const config = JSON.parse(row.value);
+    originChannels = Object.fromEntries(ORIGIN_CHANNEL_FIELDS.filter(key => config[key] !== undefined).map(key => [key, config[key]]));
+}
+// Serve an explicit unavailable response while the gateway recovers instead of
+// crashing the process. Never fall back to an independent local database.
+let sharedStateReady = !remoteStateConfigured;
+try { await refreshOriginChannels(); sharedStateReady = true; }
+catch (error) { console.error('Shared state initialization pending:', error.message); }
+
+function createEnv() {
+    return {
+        ...process.env,
+        ...originChannels,
+        img_d1: sharedD1,
+        img_r2: sharedR2,
+        IMAGE_PROCESSOR: dockerImageProcessor,
+        THUMBNAIL_CACHE: thumbnailCache,
+        ORIGINAL_CACHE: originalCache,
+        FETCH_PUBLIC_RESOURCE: publicFetch,
+    };
+}
+
+// ==================== Functions 路由解析 ====================
+
+/**
+ * 根据请求路径查找对应的 function 文件
+ */
+const findFunctionFile = functionRouter.findFunctionFile;
+
+async function findMiddlewares(pathname) {
+    const handlers = [];
+    for (const file of functionRouter.findMiddlewareFiles(pathname)) {
+        const mod = await importModule(file);
+        if (mod.onRequest) handlers.push(...(Array.isArray(mod.onRequest) ? mod.onRequest : [mod.onRequest]));
+    }
+    return handlers;
+}
+
+/**
+ * 模块导入缓存
+ */
+const moduleCache = new Map();
+
+async function importModule(filePath) {
+    if (moduleCache.has(filePath)) {
+        return moduleCache.get(filePath);
+    }
+    // Windows 上 ESM 动态 import 必须使用 file:// URL，不能直接用磁盘路径
+    const mod = await import(pathToFileURL(filePath).href);
+    moduleCache.set(filePath, mod);
+    return mod;
+}
+
+
+/**
+ * 执行中间件链和处理函数
+ */
+async function executeChain(middlewares, handler, context) {
+    const chain = [...middlewares, handler];
+    let index = 0;
+
+    context.next = async function (input, init) {
+        if (input !== undefined) {
+            context.request = input instanceof Request && !init ? input : new Request(input, init);
+        }
+        if (index < chain.length) {
+            const fn = chain[index++];
+            return await fn(context);
+        }
+        // 如果链执行完毕，返回 404
+        return new Response('Not Found', { status: 404 });
+    };
+
+    return await context.next();
+}
+
+/**
+ * 处理 Functions 请求
+ */
+async function handleFunctionRequest(originalRequest, pathname) {
+    // 查找对应的 function 文件
+    const funcInfo = findFunctionFile(pathname);
+    if (!funcInfo) return null;
+
+    // 记录外部 origin，供 fetch 拦截器使用
+    // 不再重写请求 URL，保持 url.origin 为外部 origin
+    const request = originalRequest;
+    const requestUrl = new URL(originalRequest.url);
+    const internalOrigin = `http://localhost:${port}`;
+    if (requestUrl.origin !== internalOrigin) {
+        if (selfOrigins.size >= 32 && !selfOrigins.has(requestUrl.origin)) selfOrigins.delete(selfOrigins.values().next().value);
+        selfOrigins.add(requestUrl.origin);
+    }
+
+    // 导入模块
+    const mod = await importModule(funcInfo.file);
+
+    // 根据请求方法查找处理函数
+    const method = request.method.toUpperCase();
+    const methodHandlerName = 'onRequest' + method.charAt(0) + method.slice(1).toLowerCase();
+
+    let handler = null;
+    if (typeof mod[methodHandlerName] === 'function') {
+        handler = mod[methodHandlerName];
+    } else if (mod.onRequest) {
+        handler = typeof mod.onRequest === 'function'
+            ? mod.onRequest
+            : mod.onRequest[mod.onRequest.length - 1];
+    }
+
+    if (!handler) {
+        return new Response('Method Not Allowed', { status: 405 });
+    }
+
+    // 获取中间件
+    const middlewares = await findMiddlewares(pathname);
+
+    // 如果 onRequest 是数组，把前面的加入中间件链
+    if (Array.isArray(mod.onRequest) && mod.onRequest.length > 1 && handler === mod.onRequest[mod.onRequest.length - 1]) {
+        middlewares.push(...mod.onRequest.slice(0, -1));
+    }
+
+    // 模拟 Cloudflare 的 request.cf 属性（telemetryData 等中间件依赖该属性）
+    if (!request.cf) {
+        request.cf = {
+            country: 'XX',
+            city: 'Unknown',
+            continent: 'XX',
+            latitude: '0',
+            longitude: '0',
+            region: '',
+            regionCode: '',
+            timezone: '',
+            postalCode: '',
+            asn: 0,
+            asOrganization: '',
+            colo: 'LOCAL',
+            httpProtocol: 'HTTP/1.1',
+            requestPriority: '',
+            tlsCipher: '',
+            tlsVersion: '',
+        };
+    }
+
+    // 创建 Cloudflare Pages Functions 风格的 context 对象
+    const env = createEnv();
+    const context = {
+        request,
+        env,
+        params: funcInfo.params,
+        waitUntil: (promise) => {
+            if (promise && typeof promise.catch === 'function') {
+                promise.catch(err => console.error('waitUntil error:', err));
+            }
+        },
+        next: null, // 由 executeChain 设置
+        data: {},
+    };
+
+    // 执行中间件链和处理函数
+    return await executeChain(middlewares, handler, context);
+}
+
+// ==================== Hono 应用 ====================
+
+const app = new Hono();
+
+// 判断是否是 function 路径
+const FUNCTION_PREFIXES = ['/api/', '/upload', '/file/', '/dav/', '/random'];
+
+function isFunctionPath(pathname) {
+    return FUNCTION_PREFIXES.some(prefix => pathname.startsWith(prefix));
+}
+
+// Functions 路由处理 - 处理所有 HTTP 方法
+app.all('*', async (c, next) => {
+    const url = new URL(c.req.url);
+    const pathname = url.pathname;
+
+    // 检查是否是 function 路径
+    if (isFunctionPath(pathname)) {
+        if (!sharedStateReady) return new Response('Shared state temporarily unavailable', { status: 503, headers: { 'Retry-After': '30', 'Cache-Control': 'no-store' } });
+        try {
+            // 获取客户端真实 IP 并注入到请求 header 中
+            // 因为 Node.js 环境没有 cf-connecting-ip 等 CDN header
+            let request = publicRequest(c.req.raw);
+            try {
+                const info = getConnInfo(c);
+                let clientIp = info.remote?.address;
+                // 去掉 IPv6-mapped IPv4 前缀，如 ::ffff:127.0.0.1 → 127.0.0.1
+                if (clientIp && clientIp.startsWith('::ffff:')) {
+                    clientIp = clientIp.slice(7);
+                }
+                if (clientIp && !request.headers.get('x-real-ip')) {
+                    const newHeaders = new Headers(request.headers);
+                    newHeaders.set('x-real-ip', clientIp);
+                    request = new Request(request.url, {
+                        method: request.method,
+                        headers: newHeaders,
+                        body: request.body,
+                        signal: request.signal,
+                        duplex: 'half',
+                    });
+                }
+            } catch (e) {
+                // 获取 IP 失败不影响请求处理
+            }
+            const response = await handleFunctionRequest(request, pathname);
+            if (response) {
+                return response;
+            }
+        } catch (err) {
+            console.error('Function error:', err);
+            return new Response(`Internal Server Error: ${err.message}`, { status: 500 });
+        }
+    }
+
+    // 不是 function 路径，继续到静态文件
+    await next();
+});
+
+// 静态文件服务
+app.use('/*', serveStatic({
+    root: './frontend-dist',
+    rewriteRequestPath: (path) => path,
+}));
+
+// 默认返回 index.html（SPA 支持）
+app.get('*', async (c) => {
+    const indexPath = join(ROOT_DIR, 'frontend-dist', 'index.html');
+    if (existsSync(indexPath)) {
+        const content = readFileSync(indexPath, 'utf8');
+        return c.html(content);
+    }
+    return c.text('Not Found', 404);
+});
+
+// One process owns the local R2 adapter; skip overlapping timer runs.
+let backupRunning = false;
+setInterval(async () => {
+    if (process.env.MAINTENANCE_DISABLED === 'true') return;
+    if (backupRunning) return;
+    backupRunning = true;
+    try {
+        await refreshOriginChannels();
+        sharedStateReady = true;
+        const env = createEnv();
+        const results = await Promise.allSettled([runMaintenance(env), drainTelegramBackups(env, 1)]);
+        for (const result of results) if (result.status === 'rejected') console.error('Background task:', result.reason?.message);
+    }
+    catch (error) { console.error('Backup worker:', error.message); }
+    finally { backupRunning = false; }
+}, 60000).unref();
+
+// ==================== 启动服务器 ====================
+
+async function fetchWithNativeResponse(request, env, executionCtx) {
+    const response = await app.fetch(request, env, executionCtx);
+    if (!response) {
+        return response;
+    }
+    return new NativeResponse(response.body, {
+        status: response.status,
+        statusText: response.statusText,
+        headers: response.headers,
+    });
+}
+
+serve({
+    fetch: fetchWithNativeResponse,
+    port,
+}, (info) => {
+    console.log(`Server running at http://0.0.0.0:${info.port}`);
+    console.log(`Data directory: ${DATA_DIR}`);
+    console.log(`Mode: Docker (Native Node.js)`);
+});

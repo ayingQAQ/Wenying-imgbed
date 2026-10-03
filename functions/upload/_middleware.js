@@ -1,0 +1,293 @@
+import { getUploadForm, rewriteUploadRequest } from './uploadRequest.js';
+import { errorHandling, telemetryData, checkDatabaseConfig } from '../utils/middleware';
+import { releaseR2, checkR2Reservation } from '../utils/r2Capacity.js';
+import { getDatabase } from '../utils/databaseAdapter.js';
+import { userAuthCheck, UnauthorizedResponse } from '../utils/auth/userAuth.js';
+import { authenticate, AUTH_SCOPE } from '../utils/auth/authCore.js';
+import { applyUploadNamespace, finishAnonymousUpload, reserveAnonymousUpload } from '../utils/anonymousUpload.js';
+import {
+    resolveAutomaticPrimary,
+    isAutomaticChannelRequest,
+    shouldScheduleTelegramBackup,
+    resolveEffectivePrimaryForRequest,
+    extractUploadedFileId,
+    backupFileIdToTelegram,
+} from '../utils/storageTiering.js';
+import { recordImageUpload } from '../utils/siteStats.js';
+import { fetchUploadConfig, bindRequestConfig } from '../utils/sysConfig.js';
+import { isPublicFileId, resolvePublicFile } from '../utils/publicFileId.js';
+import { visitorIdentity } from '../utils/visitorIdentity.js';
+
+const corsHeaders = {
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Visitor-ID',
+    'Access-Control-Max-Age': '86400',
+};
+
+async function handleOptions(context) {
+    if (context.request.method === 'OPTIONS') {
+        return new Response(null, {
+            status: 204,
+            headers: corsHeaders,
+        });
+    }
+    return context.next();
+}
+
+/**
+ * Automatic storage tiering for the main /upload endpoint only.
+ *
+ * Default policy:
+ * - normal R2 uploads participate in automatic R2 -> Hugging Face tiering
+ * - when projected managed R2 usage reaches the safety threshold (95% by default), use Hugging Face
+ * - Telegram is never selected as a primary by this policy; it is an asynchronous replica
+ * - API clients can bypass tiering deliberately with ?tiering=off or ?forcePrimary=true
+ */
+async function applyStorageTiering(context) {
+    bindRequestConfig(context);
+    const originalRequest = context.request;
+    const originalUrl = new URL(originalRequest.url);
+    const normalizedPath = originalUrl.pathname.replace(/\/+$/, '') || '/';
+
+    // This middleware also wraps /upload/huggingface/* in Pages/Worker deployments.
+    // Do not reinterpret the dedicated Hugging Face helper endpoints as normal uploads.
+    const cleanup = originalUrl.searchParams.get('cleanup') === 'true';
+    if (normalizedPath !== '/upload' || (originalRequest.method !== 'POST' && !cleanup)) {
+        return context.next();
+    }
+
+    // Capacity reservations are writes; authenticate before allocating them.
+    if (!await userAuthCheck(context.env, originalUrl, originalRequest, 'upload')) {
+        return UnauthorizedResponse('Unauthorized');
+    }
+    if (cleanup) {
+        const session = JSON.parse(await getDatabase(context.env).get(`upload_session_${originalUrl.searchParams.get('uploadId')}`) || 'null');
+        const response = await context.next();
+        if (response.ok) {
+            await releaseR2(context.env.img_r2, session?.tieringReservation);
+            await finishAnonymousUpload(context.env.img_r2, originalRequest, session?.anonymousReservation, false);
+        }
+        return response;
+    }
+
+    const isChunked = originalUrl.searchParams.get('chunked') === 'true';
+    const isMerge = originalUrl.searchParams.get('merge') === 'true';
+    const isInitChunked = originalUrl.searchParams.get('initChunked') === 'true';
+    const isChunkPart = isChunked && !isMerge;
+
+    let downstreamRequest = originalRequest;
+    let downstreamUrl = originalUrl;
+    // A named channel is an explicit API selection (OpenList sends only its name).
+    // Resolve it before automatic tiering, and fail closed rather than switching stores.
+    const channelName = originalUrl.searchParams.get('channelName');
+    if (channelName && !isChunkPart && !isMerge) {
+        const config = await fetchUploadConfig(context.env, context);
+        const requestedType = originalUrl.searchParams.get('uploadChannel');
+        const matches = Object.entries(config).filter(([type, value]) =>
+            (!requestedType || requestedType === type) &&
+            value?.channels?.some(channel => channel.name === channelName));
+        if (matches.length !== 1) {
+            return new Response('Unknown, disabled or ambiguous channel name', { status: 400 });
+        }
+        downstreamUrl = new URL(originalUrl);
+        downstreamUrl.searchParams.set('uploadChannel', matches[0][0]);
+        downstreamUrl.searchParams.set('tiering', 'off');
+        downstreamUrl.searchParams.set('autoRetry', 'false');
+        downstreamRequest = rewriteUploadRequest(context, downstreamUrl, originalRequest);
+    }
+    const automaticRequest = isAutomaticChannelRequest(downstreamUrl);
+    let reservationId;
+    let anonymousReservation;
+    const admin = await authenticate({ env: context.env, request: originalRequest, url: originalUrl, requiredPermission: 'upload', authScope: AUTH_SCOPE.ADMIN });
+    const isAnonymous = !admin.authorized;
+    context.anonymousUpload = isAnonymous;
+    if (isChunkPart || isMerge) {
+        const form = await getUploadForm(context, originalRequest);
+        const session = JSON.parse(await getDatabase(context.env).get(`upload_session_${form.get('uploadId')}`) || 'null');
+        if (session?.tieringReservation) {
+            reservationId = session.tieringReservation;
+            const reserved = await checkR2Reservation(context.env.img_r2, reservationId);
+            if (Date.now() > session.expiresAt) return new Response('Upload session expired', { status: 410 });
+            const chunk = form.get('file');
+            const index = Number(form.get('chunkIndex'));
+            if (isChunkPart && (!Number.isInteger(index) || index < 0 || index >= session.totalChunks ||
+                !chunk || chunk.size > 16 * 1024 * 1024 ||
+                index * 16 * 1024 * 1024 + chunk.size > reserved.bytes)) {
+                return new Response('Chunk exceeds reserved capacity', { status: 400 });
+            }
+            downstreamUrl = new URL(originalUrl);
+            downstreamUrl.searchParams.set('uploadChannel', session.uploadChannel);
+            downstreamUrl.searchParams.set('autoRetry', 'false');
+            downstreamUrl.searchParams.set('tieringReservation', reservationId);
+            downstreamRequest = rewriteUploadRequest(context, downstreamUrl, originalRequest);
+        }
+        if (session?.anonymousReservation) {
+            anonymousReservation = session.anonymousReservation;
+            downstreamUrl = new URL(downstreamUrl);
+            downstreamUrl.searchParams.set('anonymousReservation', anonymousReservation);
+            downstreamUrl.searchParams.set('uploadFolder', session.uploadFolder || '');
+            downstreamRequest = rewriteUploadRequest(context, downstreamUrl, downstreamRequest);
+        }
+    }
+
+    if (!isChunkPart && !isMerge) await getUploadForm(context, downstreamRequest);
+
+    if (isAnonymous && !isChunkPart && !isMerge && !cleanup) {
+        const quota = await reserveAnonymousUpload(context.env.img_r2, originalRequest);
+        if (!quota.reservationId) {
+            return new Response(JSON.stringify({ success: false, error: 'daily_upload_limit_reached' }), {
+                status: 429,
+                headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+            });
+        }
+        anonymousReservation = quota.reservationId;
+        downstreamUrl = new URL(downstreamUrl);
+        applyUploadNamespace(downstreamUrl, quota.namespace);
+        downstreamUrl.searchParams.set('anonymousReservation', anonymousReservation);
+        downstreamRequest = rewriteUploadRequest(context, downstreamUrl, downstreamRequest);
+    }
+
+    // Chunk parts and merge requests must keep the channel chosen by the upload session.
+    if (automaticRequest && !isChunkPart && !isMerge) {
+        const decision = await resolveAutomaticPrimary(context, downstreamRequest);
+        reservationId = decision.reservationId;
+
+        if (!decision.channel) {
+            const details = {
+                success: false,
+                error: decision.reason,
+                message: decision.reason === 'r2_threshold_reached_hf_unavailable'
+                    ? 'R2 已达到安全阈值，但 Hugging Face 未配置或不可用。请配置 Hugging Face；如确需强制写入 R2，API 请求可显式使用 tiering=off。'
+                    : decision.reason === 'guest_huggingface_unavailable'
+                        ? '访客上传的 Hugging Face 渠道暂不可用，请稍后重试。'
+                        : '没有可用的主存储渠道，请至少配置 R2 或 Hugging Face。',
+                tiering: decision,
+            };
+            await finishAnonymousUpload(context.env.img_r2, originalRequest, anonymousReservation, false);
+            return new Response(JSON.stringify(details), {
+                status: 503,
+                headers: {
+                    ...corsHeaders,
+                    'Content-Type': 'application/json',
+                },
+            });
+        }
+
+        // The existing chunk uploader cannot switch an initialized multipart session
+        // to Hugging Face. Fail before creating a partial session; the frontend can
+        // then use the existing HF direct/LFS flow.
+        if (isInitChunked && decision.channel === 'huggingface') {
+            await finishAnonymousUpload(context.env.img_r2, originalRequest, anonymousReservation, false);
+            return new Response(JSON.stringify({
+                success: false,
+                error: 'hf_direct_upload_required',
+                message: '当前上传使用 Hugging Face，大文件请使用直传流程。',
+                tiering: decision,
+            }), {
+                status: 409,
+                headers: {
+                    ...corsHeaders,
+                    'Content-Type': 'application/json',
+                },
+            });
+        }
+
+        downstreamUrl = new URL(downstreamUrl);
+        downstreamUrl.searchParams.set('uploadChannel', decision.channel);
+        downstreamUrl.searchParams.delete('channelName');
+
+        // The upstream retry list includes Telegram/S3/etc. In automatic tiered mode
+        // those must never silently become the primary, otherwise TG would stop being
+        // a backup-only backend. Capacity switching is handled here instead.
+        downstreamUrl.searchParams.set('autoRetry', 'false');
+        downstreamUrl.searchParams.delete('tieringReservation');
+        if (reservationId) downstreamUrl.searchParams.set('tieringReservation', reservationId);
+
+        downstreamRequest = rewriteUploadRequest(context, downstreamUrl, originalRequest);
+        context.storageTieringDecision = decision;
+    }
+
+    // HF can also be selected directly by the UI. Its failures must not fall back
+    // to a full R2 bucket or promote Telegram to primary storage.
+    if (downstreamUrl.searchParams.get('uploadChannel') === 'huggingface') {
+        downstreamUrl = new URL(downstreamUrl);
+        downstreamUrl.searchParams.set('autoRetry', 'false');
+        downstreamRequest = rewriteUploadRequest(context, downstreamUrl, downstreamRequest);
+    }
+
+    const effectivePrimary = await resolveEffectivePrimaryForRequest(
+        context,
+        downstreamRequest,
+        downstreamUrl.searchParams.get('uploadChannel') || ''
+    );
+
+    // Passing the rewritten Request through next() is the documented Pages Functions
+    // mechanism; mutating context.request is not relied upon.
+    context.data ||= {};
+    context.data.r2Reservation = reservationId;
+    let response;
+    try {
+        const forwarded = rewriteUploadRequest(context, downstreamRequest.url, downstreamRequest);
+        bindRequestConfig(context, forwarded);
+        response = await context.next(forwarded);
+    } catch (error) {
+        await finishAnonymousUpload(context.env.img_r2, originalRequest, anonymousReservation, false);
+        anonymousReservation = undefined;
+        throw error;
+    } finally {
+        // A successful init keeps capacity until merge; failed parts can be retried.
+        if (reservationId && !(isMerge && response?.status === 409) && ((!isChunkPart && !isInitChunked) || (isInitChunked && !response?.ok))) {
+            await releaseR2(context.env.img_r2, reservationId, { committed: !isInitChunked && (!!response?.ok || !!context.data?.r2ObjectCommitted) });
+        }
+    }
+
+    if (anonymousReservation && !isChunkPart && !isInitChunked && !(isMerge && response?.status === 409)) {
+        await finishAnonymousUpload(context.env.img_r2, originalRequest, anonymousReservation, !!response?.ok);
+    } else if (anonymousReservation && isInitChunked && !response?.ok) {
+        await finishAnonymousUpload(context.env.img_r2, originalRequest, anonymousReservation, false);
+    }
+
+    const isFinalUpload = !isInitChunked && !isChunkPart;
+    let uploadedFileId;
+    if (isFinalUpload && response.ok) {
+        uploadedFileId = await extractUploadedFileId(response.clone());
+        if (isPublicFileId(uploadedFileId)) {
+            uploadedFileId = await resolvePublicFile(context.env, uploadedFileId, async () => []);
+        }
+        if (uploadedFileId) {
+            const record = await getDatabase(context.env).getWithMetadata(uploadedFileId);
+            context.waitUntil(recordImageUpload(context.env.img_r2, record?.metadata));
+        }
+    }
+    if (
+        isFinalUpload &&
+        response.ok &&
+        shouldScheduleTelegramBackup(effectivePrimary, downstreamUrl)
+    ) {
+        const fileId = uploadedFileId || await extractUploadedFileId(response.clone());
+        if (fileId) {
+            // Persist the job before acknowledging success. Processing is resumable.
+            await backupFileIdToTelegram(context, fileId, effectivePrimary);
+        }
+    }
+
+    return response;
+}
+
+export const onRequest = [
+    checkDatabaseConfig,
+    handleOptions,
+    visitorIdentity,
+    errorHandling,
+    storageTiering,
+    telemetryData,
+];
+
+export async function storageTiering(context) {
+    try { return await applyStorageTiering(context); }
+    catch (error) {
+        if (error.status === 413) return new Response(error.message, { status: 413, headers: corsHeaders });
+        throw error;
+    }
+}

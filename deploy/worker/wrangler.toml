@@ -1,0 +1,31 @@
+# Generated from dual-backend.json; legacy KV/CUSTOM_DOMAIN secrets are intentionally ignored.
+name = "cloudflare-imgbed"
+main = "routes-entry.js"
+compatibility_date = "2024-08-21"
+compatibility_flags = ["global_fetch_strictly_public"]
+keep_vars = true
+routes = [{ pattern = "imgb.top/*", zone_name = "imgb.top" }, { pattern = "www.imgb.top/*", zone_name = "imgb.top" }]
+[triggers]
+crons = ["* * * * *"]
+[assets]
+directory = "../../frontend-dist"
+binding = "ASSETS"
+not_found_handling = "single-page-application"
+[images]
+binding = "IMAGES"
+[vars]
+ORIGIN_FALLBACK_MODE = "routes"
+ORIGIN_STATE_READY = "true"
+MAINTENANCE_OWNER = "origin"
+ORIGIN_BASE_URL = "https://origin-vps.imgb.top"
+[[d1_databases]]
+binding = "img_d1"
+database_name = "imgbed-shared"
+database_id = "c6ffa93f-e9db-49ca-af62-9b2f2adf4412"
+[[r2_buckets]]
+binding = "img_r2"
+bucket_name = "imgbed-r2"
+[[durable_objects.bindings]]
+name = "HF_COMMITS"
+class_name = "HFCommitCoordinator"
+script_name = "cloudflare-imgbed-state-gateway"

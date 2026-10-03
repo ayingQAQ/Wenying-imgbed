@@ -1,0 +1,364 @@
+import { createChunkedStream, parseByteRange } from '../file/chunkedStream.js';
+import { r2Put } from './r2Write.js';
+import { getDatabase } from './databaseAdapter.js';
+import { fetchUploadConfig } from './sysConfig.js';
+import { INTERNAL_PREFIX } from './r2Capacity.js';
+import { TelegramAPI } from './storage/telegramAPI.js';
+
+const PENDING = `${INTERNAL_PREFIX}telegram/pending/`;
+const COMPLETE = `${INTERNAL_PREFIX}telegram/complete/`;
+const WORKER_SLOT = `${INTERNAL_PREFIX}telegram/worker-slot.json`;
+const WORKER_LEASE_MS = 180000;
+const WORKER_BUDGET_MS = 90000;
+const CURSOR = `${INTERNAL_PREFIX}telegram/cursor.json`;
+const CHUNK_SIZE = 8 * 1024 * 1024;
+const TG_PHOTO_MAX_BYTES = 10 * 1024 * 1024;
+const TG_VIDEO_MAX_BYTES = 50 * 1024 * 1024;
+const CF_REMOTE_IMAGE_MAX_BYTES = 100 * 1000 * 1000;
+const PREVIEW_IMAGE_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp']);
+const PREVIEW_VIDEO_TYPES = new Set(['video/mp4']);
+const json = object => new Response(object.body).json();
+const encodePath = path => path.split('/').map(encodeURIComponent).join('/');
+const sourceMetadata = metadata => Object.fromEntries([
+    'BackupId', 'TimeStamp', 'Channel', 'ChannelName', 'HfFilePath', 'FileName', 'FileType', 'FileSizeBytes',
+].filter(key => metadata[key] !== undefined).map(key => [key, metadata[key]]));
+
+async function jobId(fileId, metadata) {
+    if (metadata.BackupId) return metadata.BackupId;
+    const bytes = new TextEncoder().encode(JSON.stringify([fileId, metadata.TimeStamp, metadata.Channel, metadata.HfFilePath]));
+    const digest = await crypto.subtle.digest('SHA-256', bytes);
+    return [...new Uint8Array(digest)].map(byte => byte.toString(16).padStart(2, '0')).join('');
+}
+
+export async function relocateTelegramBackup(env, fileId, metadata) {
+    if (!env.img_r2 || !metadata.BackupId) return;
+    const bucket = env.img_r2;
+    const id = metadata.BackupId;
+    for (let attempt = 0; attempt < 8; attempt++) {
+        const key = await bucket.head(COMPLETE + id) ? COMPLETE + id : PENDING + id;
+        const object = await bucket.get(key);
+        if (!object) return;
+        const job = await json(object);
+        job.fileId = fileId;
+        job.metadata = sourceMetadata(metadata);
+        if (job.primaryChannel === 'cfr2') job.sourceEtag = (await bucket.head(fileId))?.etag;
+        job.leaseUntil = 0;
+        job.nextAttemptAt = 0;
+        if (await r2Put(bucket, key, JSON.stringify(job), { onlyIf: { etagMatches: object.etag } })) return;
+    }
+    throw new Error('Backup relocation is busy; retry the operation');
+}
+
+export async function getTelegramBackup(env, fileId, metadata) {
+    const bucket = env.img_r2;
+    if (!bucket) return null;
+    metadata ||= (await getDatabase(env).getWithMetadata(fileId))?.metadata;
+    if (!metadata) return null;
+    const id = await jobId(fileId, metadata);
+    const object = await bucket.get(COMPLETE + id) || await bucket.get(PENDING + id);
+    return object ? json(object) : null;
+}
+
+export async function enqueueTelegramBackup(context, fileId, primaryChannel) {
+    if (String(context.env.TG_BACKUP_ENABLED).toLowerCase() === 'false') return;
+    if (!['cfr2', 'huggingface'].includes(primaryChannel)) return;
+    const bucket = context.env.img_r2;
+    if (!bucket) throw new Error('R2 binding is required for durable Telegram backup jobs');
+    const record = await getDatabase(context.env).getWithMetadata(fileId);
+    if (!record?.metadata) throw new Error('Primary metadata is unavailable; cannot enqueue backup');
+    const metadata = record.metadata;
+    const id = await jobId(fileId, metadata);
+    if (await bucket.head(COMPLETE + id)) return;
+    const sourceHead = primaryChannel === 'cfr2' ? await bucket.head(fileId) : null;
+    const size = sourceHead?.size ?? Number(metadata.FileSizeBytes);
+    if (!Number.isSafeInteger(size) || size < 0) throw new Error('Backup source size is unavailable');
+    const origin = context.request ? new URL(context.request.url).origin : '';
+    const job = { id, fileId, primaryChannel, metadata: sourceMetadata(metadata), size, sourceEtag: sourceHead?.etag, origin,
+        chunks: [], status: 'pending', attempts: 0, nextAttemptAt: 0, createdAt: Date.now() };
+    // No writes to the file's KV key: manifests live in R2 values, without the 1KB limit.
+    await r2Put(bucket, PENDING + id, JSON.stringify(job), { onlyIf: { etagDoesNotMatch: '*' } });
+    // One bounded attempt for low latency; scheduled/request-driven workers resume the rest.
+    context.waitUntil(processTelegramBackup(context.env, id).catch(error => console.error('Backup worker:', error.message)));
+}
+
+async function readSlice(env, job, config, start, end, signal) {
+    signal?.throwIfAborted();
+    if (end === start) return new Blob([]);
+    if (job.primaryChannel === 'cfr2') {
+        const object = await env.img_r2.get(job.fileId, {
+            range: { offset: start, length: end - start }, onlyIf: { etagMatches: job.sourceEtag },
+        });
+        if (!object?.body) throw new Error('R2 backup source changed or was deleted');
+        const blob = await boundedBackupBlob(object.body, end - start, signal);
+        if (blob.size !== end - start) throw new Error('Incomplete R2 range');
+        return blob;
+    }
+    const channel = config.huggingface.channels.find(c => c.name === job.metadata.ChannelName);
+    if (!channel?.token || !channel.repo || !job.metadata.HfFilePath) throw new Error('Hugging Face source channel is unavailable');
+    const url = `https://huggingface.co/datasets/${encodePath(channel.repo)}/resolve/main/${encodePath(job.metadata.HfFilePath)}`;
+    const response = await fetch(url, {
+        headers: { Authorization: `Bearer ${channel.token}`, Range: `bytes=${start}-${end - 1}` },
+        signal: AbortSignal.any([signal, AbortSignal.timeout(15000)]),
+    });
+    if (!response.ok || (response.status !== 206 && (start !== 0 || end !== job.size))) {
+        await response.body?.cancel();
+        throw new Error(`Hugging Face range read failed: ${response.status}`);
+    }
+    if (response.status === 206 && !response.headers.get('content-range')?.startsWith(`bytes ${start}-${end - 1}/`)) {
+        await response.body?.cancel();
+        throw new Error('Unexpected Hugging Face content range');
+    }
+    const blob = await boundedBackupBlob(response.body, end - start, signal);
+    if (blob.size !== end - start) throw new Error('Incomplete Hugging Face range');
+    return blob;
+}
+
+async function boundedBackupBlob(body, limit, signal) {
+    const reader = body.getReader();
+    const abort = () => reader.cancel(signal.reason).catch(() => {});
+    signal?.addEventListener('abort', abort, { once: true });
+    const chunks = [];
+    let bytes = 0;
+    try {
+        signal?.throwIfAborted();
+        while (true) {
+            const part = await reader.read();
+            signal?.throwIfAborted();
+            if (part.done) break;
+            bytes += part.value.byteLength;
+            if (bytes > limit) throw new Error('Backup source exceeds byte limit');
+            chunks.push(part.value);
+        }
+        return new Blob(chunks);
+    } finally {
+        signal?.removeEventListener('abort', abort);
+        chunks.length = 0;
+        void reader.cancel().catch(() => {});
+    }
+}
+
+function previewImageType(job) {
+    return String(job.metadata?.FileType || '').split(';')[0].trim().toLowerCase();
+}
+
+function shouldSendPreview(job) {
+    const type = previewImageType(job);
+    return job.size > 0 && !job.preview && (
+        PREVIEW_IMAGE_TYPES.has(type) && job.size <= CF_REMOTE_IMAGE_MAX_BYTES ||
+        PREVIEW_VIDEO_TYPES.has(type) && job.size <= TG_VIDEO_MAX_BYTES
+    );
+}
+
+async function createTelegramPreview(env, job, config, signal) {
+    if (job.size <= TG_PHOTO_MAX_BYTES) {
+        return { blob: await readSlice(env, job, config, 0, job.size, signal), type: previewImageType(job), suffix: '' };
+    }
+    if (!job.origin) throw new Error('Large image preview source URL is unavailable');
+    const sourceUrl = `${job.origin}/file/${encodePath(job.fileId)}?telegram-preview=${encodeURIComponent(job.id)}`;
+    const response = await fetch(sourceUrl, {
+        cf: { image: { width: 1920, height: 1920, fit: 'scale-down', quality: 76, format: 'jpeg' } },
+        signal: AbortSignal.any([signal, AbortSignal.timeout(30000)]),
+    });
+    if (!response.ok || !response.body) {
+        await response.body?.cancel();
+        throw new Error(`Cloudflare preview transform failed: ${response.status}`);
+    }
+    const declaredSize = Number(response.headers.get('content-length'));
+    if (Number.isFinite(declaredSize) && declaredSize > TG_PHOTO_MAX_BYTES) {
+        await response.body.cancel();
+        throw new Error('Cloudflare preview transform is still larger than 10 MB');
+    }
+    const blob = await boundedBackupBlob(response.body, TG_PHOTO_MAX_BYTES, signal);
+    if (blob.size > TG_PHOTO_MAX_BYTES) throw new Error('Cloudflare preview transform is still larger than 10 MB');
+    return { blob, type: 'image/jpeg', suffix: '.preview.jpg' };
+}
+
+async function sendTelegramPreview(env, job, config, channel, signal) {
+    signal.throwIfAborted();
+    const form = new FormData();
+    form.set('chat_id', channel.chatId);
+    const type = previewImageType(job);
+    const isVideo = PREVIEW_VIDEO_TYPES.has(type);
+    let method;
+    if (isVideo) {
+        const video = await readSlice(env, job, config, 0, job.size, signal);
+        form.set('video', new Blob([video], { type }), job.metadata.FileName || 'video.mp4');
+        form.set('supports_streaming', 'true');
+        method = 'sendVideo';
+    } else {
+        const preview = await createTelegramPreview(env, job, config, signal);
+        form.set('photo', new Blob([preview.blob], { type: preview.type || 'image/jpeg' }),
+            `${job.metadata.FileName || 'preview'}${preview.suffix}`);
+        method = 'sendPhoto';
+    }
+    form.set('caption', [
+        `${isVideo ? '🎬' : '🖼'} ${job.metadata.FileName || (isVideo ? 'Video' : 'Image')}`,
+        `Size: ${(job.size / 1024 / 1024).toFixed(2)} MB`,
+        `Primary: ${job.primaryChannel === 'cfr2' ? 'R2' : 'Hugging Face'}`,
+        `Backup ID: ${job.id.slice(0, 12)}`,
+    ].join('\n'));
+    const api = new TelegramAPI(channel.botToken, channel.proxyUrl || '');
+    const response = await fetch(`${api.baseURL}/${method}`, {
+        method: 'POST', body: form, signal: AbortSignal.any([signal, AbortSignal.timeout(isVideo ? 60000 : 15000)]),
+    });
+    const result = await response.json();
+    if (!response.ok || !result.ok || !result.result?.message_id) {
+        throw new Error(`Telegram preview failed: ${response.status}, code ${result.error_code || 'unknown'}`);
+    }
+    const photos = result.result.photo || [];
+    return { status: 'ready', messageId: result.result.message_id,
+        fileId: isVideo ? result.result.video?.file_id || null : photos.at(-1)?.file_id || null,
+        kind: isVideo ? 'video' : 'photo', createdAt: Date.now() };
+}
+
+// All request, timer and scheduled workers compete for the same durable slot.
+// Claim it before reading source bytes or constructing a preview. A crashed worker
+// loses the lease; a live worker cancels I/O before the lease can expire.
+export async function processTelegramBackup(env, id) {
+    if (String(env.TG_BACKUP_ENABLED).toLowerCase() === 'false') return;
+    const bucket = env.img_r2;
+    const previous = await bucket.get(WORKER_SLOT);
+    const slot = previous ? await json(previous) : null;
+    if (slot?.until > Date.now()) return 'busy';
+    const startedAt = Date.now();
+    const claim = await r2Put(bucket, WORKER_SLOT, JSON.stringify({ token: crypto.randomUUID(), until: startedAt + WORKER_LEASE_MS }), {
+        onlyIf: previous ? { etagMatches: previous.etag } : { etagDoesNotMatch: '*' },
+    });
+    if (!claim) return 'busy';
+    const controller = new AbortController();
+    const remainingMs = WORKER_BUDGET_MS - (Date.now() - startedAt);
+    if (remainingMs <= 0) controller.abort(new Error('Backup worker admission expired'));
+    const timer = setTimeout(() => controller.abort(new Error('Backup worker deadline exceeded')), Math.max(0, remainingMs));
+    try { controller.signal.throwIfAborted(); return await processClaimedBackup(env, id, controller.signal); }
+    finally {
+        clearTimeout(timer);
+        // Conditional release cannot clear another worker's recovered slot.
+        await r2Put(bucket, WORKER_SLOT, JSON.stringify({ until: 0 }), { onlyIf: { etagMatches: claim.etag } });
+    }
+}
+
+async function processClaimedBackup(env, id, signal) {
+    const bucket = env.img_r2;
+    const key = PENDING + id;
+    const object = await bucket.get(key);
+    if (!object) return null;
+    const job = await json(object);
+    const now = Date.now();
+    if (job.leaseUntil > now || job.nextAttemptAt > now) return 'deferred';
+    job.leaseUntil = now + WORKER_LEASE_MS;
+    job.lease = crypto.randomUUID();
+    const claim = await r2Put(bucket, key, JSON.stringify(job), { onlyIf: { etagMatches: object.etag } });
+    if (!claim) return 'busy';
+    // Recover a crash between the final checkpoint and manifest publication.
+    if (['ready', 'cancelled'].includes(job.status)) {
+        await r2Put(bucket, COMPLETE + id, JSON.stringify(job));
+        await bucket.delete(key);
+        return job.status;
+    }
+    try {
+        const record = await getDatabase(env).getWithMetadata(job.fileId);
+        if (!record?.metadata || await jobId(job.fileId, record.metadata) !== id) {
+            job.status = 'cancelled'; // Deleted/replaced files must never be recreated by a backup.
+        } else {
+            const config = await fetchUploadConfig(env);
+            // Pin the bot/channel after the first successful part; do not mix credentials.
+            const name = job.channelName || env.TG_BACKUP_CHANNEL_NAME;
+            const channel = name ? config.telegram.channels.find(c => c.name === name) : config.telegram.channels[0];
+            if (!channel?.botToken || !channel.chatId) throw new Error('Telegram backup channel is not configured');
+            const botId = channel.botToken.split(':')[0];
+            if (job.botId && job.botId !== botId) throw new Error('Telegram backup bot changed');
+            // A photo is only a human-friendly preview. The document chunks remain the recoverable copy.
+            if (shouldSendPreview(job)) {
+                try {
+                    job.preview = await sendTelegramPreview(env, job, config, channel, signal);
+                } catch (error) {
+                    console.warn('Telegram media preview failed:', error.message);
+                    job.preview = { status: 'failed', error: String(error.message).slice(0, 200), updatedAt: Date.now() };
+                }
+            } else if (!job.preview && previewImageType(job).startsWith('image/') && job.size > CF_REMOTE_IMAGE_MAX_BYTES) {
+                job.preview = { status: 'skipped', reason: 'image_too_large_to_transform', updatedAt: Date.now() };
+            } else if (!job.preview && PREVIEW_VIDEO_TYPES.has(previewImageType(job)) && job.size > TG_VIDEO_MAX_BYTES) {
+                job.preview = { status: 'skipped', reason: 'video_too_large', updatedAt: Date.now() };
+            }
+            signal.throwIfAborted();
+            const index = job.chunks.length;
+            const start = index * CHUNK_SIZE;
+            const end = Math.min(start + CHUNK_SIZE, job.size);
+            const blob = await readSlice(env, job, config, start, end, signal);
+            signal.throwIfAborted();
+            const form = new FormData();
+            form.set('chat_id', channel.chatId);
+            form.set('document', blob, `${job.metadata.FileName || 'backup'}.part${String(index).padStart(5, '0')}`);
+            form.set('caption', `ImgBed backup ${id} ${index + 1}/${Math.max(1, Math.ceil(job.size / CHUNK_SIZE))}`);
+            const api = new TelegramAPI(channel.botToken, channel.proxyUrl || '');
+            const response = await fetch(`${api.baseURL}/sendDocument`, {
+                method: 'POST', body: form, signal: AbortSignal.any([signal, AbortSignal.timeout(15000)]),
+            });
+            const result = await response.json();
+            if (!response.ok || !result.ok || !result.result?.document?.file_id) {
+                throw new Error(`Telegram send failed: ${response.status}, code ${result.error_code || 'unknown'}`);
+            }
+            job.chunks.push({ fileId: result.result.document.file_id, size: blob.size });
+            job.channelName = channel.name;
+            job.botId = botId;
+            job.status = end >= job.size ? 'ready' : 'pending';
+            job.attempts = 0;
+            job.nextAttemptAt = 0;
+            job.lastError = null;
+        }
+    } catch (error) {
+        job.status = 'retrying';
+        job.attempts++;
+        job.lastError = String(error.message).slice(0, 300);
+        job.nextAttemptAt = Date.now() + Math.min(3600000, 1000 * 2 ** Math.min(job.attempts, 12));
+    }
+    job.leaseUntil = 0;
+    job.updatedAt = Date.now();
+    const saved = await r2Put(bucket, key, JSON.stringify(job), { onlyIf: { etagMatches: claim.etag } });
+    if (!saved) return 'busy'; // A reclaimed lease owns further progress.
+    if (['ready', 'cancelled'].includes(job.status)) {
+        await r2Put(bucket, COMPLETE + id, JSON.stringify(job));
+        await bucket.delete(key);
+    }
+    return job.status;
+}
+
+export async function drainTelegramBackups(env, maxSteps = 10) {
+    if (String(env.TG_BACKUP_ENABLED).toLowerCase() === 'false') return 0;
+    if (!env.img_r2) return 0;
+    const savedCursor = await env.img_r2.get(CURSOR);
+    const cursor = savedCursor ? (await json(savedCursor)).cursor : null;
+    const page = await env.img_r2.list({ prefix: PENDING, limit: Math.max(1, Math.min(10, maxSteps)),
+        ...(cursor ? { cursor } : {}) });
+    // Advance past deferred jobs as well: a failed/large job cannot starve the tail.
+    if (!page.objects.length && !cursor) return 0;
+    let processed = 0;
+    for (const object of page.objects) {
+        const status = await processTelegramBackup(env, object.key.slice(PENDING.length));
+        if (!['deferred', 'busy', null].includes(status)) processed++;
+    }
+    await r2Put(env.img_r2, CURSOR, JSON.stringify({ cursor: page.truncated ? page.cursor : null }));
+    return processed;
+}
+
+// Used after the existing file access checks, and by the authenticated restore endpoint.
+export async function readTelegramBackup(env, fileId, metadata, request) {
+    const job = await getTelegramBackup(env, fileId, metadata);
+    if (job?.status !== 'ready') return null;
+    const config = await fetchUploadConfig(env);
+    const channel = config.telegram.channels.find(c => c.name === job.channelName);
+    if (!channel || channel.botToken.split(':')[0] !== job.botId) return null;
+    const api = new TelegramAPI(channel.botToken, channel.proxyUrl || '');
+    const requestedRange = request?.headers.get('Range');
+    const range = parseByteRange(requestedRange, job.size);
+    if (!range) return new Response(null, { status: 416, headers: { 'Content-Range': `bytes */${job.size}` } });
+    const { start, end } = range;
+    const body = request?.method === 'HEAD' || job.size === 0 ? null : createChunkedStream(job.chunks, {
+        start, end, signal: request?.signal,
+        fetchChunk: (chunk, signal) => api.getFileContent(chunk.fileId, { signal }),
+    });
+    return new Response(body, { status: range.partial ? 206 : 200, headers: {
+        ...(range.partial ? { 'Content-Range': `bytes ${start}-${end}/${job.size}` } : {}),
+        'Accept-Ranges': 'bytes', 'Content-Type': job.metadata.FileType || 'application/octet-stream',
+        'Content-Length': String(Math.max(0, end - start + 1)), 'Cache-Control': 'private, no-store', 'X-ImgBed-Replica': 'telegram' } });
+}

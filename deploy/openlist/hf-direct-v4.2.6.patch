@@ -1,0 +1,137 @@
+diff --git a/drivers/cloudflare_imgbed/upload.go b/drivers/cloudflare_imgbed/upload.go
+index 0de9542..a7dfc10 100644
+--- a/drivers/cloudflare_imgbed/upload.go
++++ b/drivers/cloudflare_imgbed/upload.go
+@@ -29,7 +29,8 @@ import (
+ )
+ 
+ func (d *CFImgBed) Put(ctx context.Context, dstDir model.Obj, file model.FileStreamer, up driver.UpdateProgress) (newObj model.Obj, err error) {
+-	if file.GetSize() < hfDirectThreshold {
++	hfOnly := d.LargeChannelType == "huggingface" && d.SmallChannelName != "" && d.SmallChannelName == d.LargeChannelName
++	if file.GetSize() < hfDirectThreshold && !hfOnly {
+ 		newObj, err = d.standardUpload(ctx, dstDir, file, up)
+ 	} else {
+ 		switch d.LargeChannelType {
+@@ -155,9 +156,7 @@ func (d *CFImgBed) chunkedUpload(ctx context.Context, dstDir model.Obj, file mod
+ 	fileMime := file.GetMimetype()
+ 	fileName := file.GetName()
+ 
+-	var chunkSizeMap = map[string]int64{
+-
+-	}
++	var chunkSizeMap = map[string]int64{}
+ 	chunkSize := chunkSizeMap[channelType]
+ 	if chunkSize == 0 {
+ 		chunkSize = 5 * 1024 * 1024
+@@ -322,15 +321,20 @@ func (d *CFImgBed) hfDirectUpload(ctx context.Context, dstDir model.Obj, file mo
+ 		return nil, errors.New("LargeChannelName not configured")
+ 	}
+ 
++	prepareStarted := time.Now()
+ 	sha256Hash := file.GetHash().GetHash(utils.SHA256)
+-	if len(sha256Hash) != utils.SHA256.Width {
++	if len(sha256Hash) != utils.SHA256.Width || (thumbnailEligible(file) && file.GetFile() == nil) {
+ 		var err error
+-		_, sha256Hash, err = stream.CacheFullAndHash(file, &up, utils.SHA256)
++		cacheProgress := model.UpdateProgressWithRange(up, 0, 10)
++		_, sha256Hash, err = stream.CacheFullAndHash(file, &cacheProgress, utils.SHA256)
+ 		if err != nil {
+ 			return nil, err
+ 		}
+ 	}
+ 
++	thumbnail := makeUploadThumbnail(ctx, file)
++	up(10)
++	log.WithFields(log.Fields{"stage": "source_prepare", "duration_ms": time.Since(prepareStarted).Milliseconds(), "bytes": file.GetSize()}).Info("HF upload stage completed")
+ 	fileSize := file.GetSize()
+ 	sampleSize := min(fileSize, fileSampleSize)
+ 	sampleRd, err := file.RangeRead(http_range.Range{Start: 0, Length: sampleSize})
+@@ -347,6 +351,7 @@ func (d *CFImgBed) hfDirectUpload(ctx context.Context, dstDir model.Obj, file mo
+ 	fileMime := file.GetMimetype()
+ 	// 1. 请求图床后端获取 HF 授权地址
+ 	reqBody := map[string]interface{}{
++		"forceLfs":     true,
+ 		"fileName":     file.GetName(),
+ 		"fileType":     fileMime,
+ 		"fileSize":     fileSize,
+@@ -356,6 +361,7 @@ func (d *CFImgBed) hfDirectUpload(ctx context.Context, dstDir model.Obj, file mo
+ 		"uploadFolder": dstDir.GetPath(),
+ 	}
+ 
++	authorizationStarted := time.Now()
+ 	var getUrlResp hfGetUrlResp
+ 	_, err = d.doRequest(ctx, http.MethodPost, hfGetUrlApi, func(req *resty.Request) {
+ 		req.SetBody(reqBody)
+@@ -365,16 +371,28 @@ func (d *CFImgBed) hfDirectUpload(ctx context.Context, dstDir model.Obj, file mo
+ 		return nil, err
+ 	}
+ 
++	log.WithFields(log.Fields{"stage": "authorization", "duration_ms": time.Since(authorizationStarted).Milliseconds(), "bytes": fileSize}).Info("HF upload stage completed")
++	finishUpload := func() (model.Obj, error) {
++		up(97)
++		obj, err := d.hfCommit(ctx, getUrlResp, file.GetName(), fileSize, fileMime, file.ModTime(), thumbnail)
++		if err == nil {
++			up(100)
++		}
++		return obj, err
++	}
+ 	// 秒传逻辑
+-	if getUrlResp.AlreadyExists || !getUrlResp.NeedsLfs {
+-		up(100)
+-		return d.hfCommit(ctx, getUrlResp, file.GetName(), fileSize, fileMime, file.ModTime())
++	if !getUrlResp.NeedsLfs && !getUrlResp.AlreadyExists {
++		return nil, fmt.Errorf("HF direct upload requires LFS upload information")
++	}
++	if getUrlResp.AlreadyExists {
++		return finishUpload()
+ 	}
+ 
+ 	if getUrlResp.UploadAction == nil {
+ 		return nil, fmt.Errorf("HF upload action is nil")
+ 	}
+ 
++	dataStarted := time.Now()
+ 	headers := getUrlResp.UploadAction.Header
+ 	href := getUrlResp.UploadAction.Href
+ 
+@@ -455,7 +473,7 @@ func (d *CFImgBed) hfDirectUpload(ctx context.Context, dstDir model.Obj, file mo
+ 					etag := res.Header.Get("ETag")
+ 					parts[partNumber-1] = map[string]any{"partNumber": partNumber, "etag": etag}
+ 
+-					up(95 * float64(g.Success()+1) / float64(totalParts))
++					up(10 + 85*float64(g.Success()+1)/float64(totalParts))
+ 					return nil
+ 				},
+ 			})
+@@ -493,7 +511,7 @@ func (d *CFImgBed) hfDirectUpload(ctx context.Context, dstDir model.Obj, file mo
+ 		// 单文件直传 (PUT)
+ 		limitedReader := driver.NewLimitedUploadStream(ctx, &driver.ReaderUpdatingProgress{
+ 			Reader:         file,
+-			UpdateProgress: model.UpdateProgressWithRange(up, 0, 97),
++			UpdateProgress: model.UpdateProgressWithRange(up, 10, 95),
+ 		})
+ 
+ 		req, err := http.NewRequestWithContext(ctx, http.MethodPut, href, limitedReader)
+@@ -514,14 +532,19 @@ func (d *CFImgBed) hfDirectUpload(ctx context.Context, dstDir model.Obj, file mo
+ 		}
+ 	}
+ 
+-	defer up(100)
++	log.WithFields(log.Fields{"stage": "data_upload", "duration_ms": time.Since(dataStarted).Milliseconds(), "bytes": fileSize}).Info("HF upload stage completed")
+ 
+ 	// 3. 通知图床后端完成文件登记
+-	return d.hfCommit(ctx, getUrlResp, file.GetName(), fileSize, fileMime, file.ModTime())
++	return finishUpload()
+ }
+ 
+-func (d *CFImgBed) hfCommit(ctx context.Context, getUrlResp hfGetUrlResp, fileName string, fileSize int64, fileMime string, modTime time.Time) (model.Obj, error) {
++func (d *CFImgBed) hfCommit(ctx context.Context, getUrlResp hfGetUrlResp, fileName string, fileSize int64, fileMime string, modTime time.Time, thumbnail string) (model.Obj, error) {
++	started := time.Now()
++	defer func() {
++		log.WithFields(log.Fields{"stage": "commit", "duration_ms": time.Since(started).Milliseconds(), "bytes": fileSize}).Info("HF upload stage completed")
++	}()
+ 	commitBody := map[string]interface{}{
++		"thumbnail":   thumbnail,
+ 		"fullId":      getUrlResp.FullID,
+ 		"filePath":    getUrlResp.FilePath,
+ 		"sha256":      getUrlResp.Oid,
