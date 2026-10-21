@@ -1,0 +1,109 @@
+name: Verify and build
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+  workflow_call:
+permissions:
+  contents: read
+concurrency:
+  group: verify-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  source:
+    name: Publication policy and source checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '22'
+      - run: npm run check
+      - name: Scan source for credentials with Gitleaks
+        shell: bash
+        env:
+          GITLEAKS_VERSION: '8.30.1'
+        run: |
+          set -euo pipefail
+          scan_dir="${RUNNER_TEMP}/gitleaks"
+          mkdir -p "${scan_dir}"
+          asset="gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          base="https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}"
+          curl --fail --silent --show-error --location "${base}/${asset}" -o "${scan_dir}/${asset}"
+          curl --fail --silent --show-error --location "${base}/gitleaks_${GITLEAKS_VERSION}_checksums.txt" -o "${scan_dir}/checksums.txt"
+          (cd "${scan_dir}" && sha256sum --check --ignore-missing checksums.txt && tar -xzf "${asset}" gitleaks)
+          "${scan_dir}/gitleaks" dir . --redact --no-banner --exit-code 1
+  frontend-worker:
+    name: Frontend artifact and Worker bundle
+    needs: source
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            frontend/package-lock.json
+      - run: npm --prefix frontend ci --no-audit --no-fund
+      - run: npm run build:frontend
+      - name: Check generated assets for accidental disclosures
+        run: node scripts/check-publication.mjs --assets
+      - name: Install Worker build tools
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Bundle standalone Worker without deployment
+        env:
+          D1_DATABASE_ID: 00000000-0000-0000-0000-000000000000
+          R2_BUCKET_NAME: example-images
+          WRANGLER_SEND_METRICS: 'false'
+        run: |
+          node deploy/worker/generate-routes.js
+          node deploy/worker/generate-toml.js
+          npx wrangler deploy --dry-run --outdir .worker-build --config deploy/worker/wrangler.toml
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: frontend-${{ github.sha }}
+          path: frontend-dist/
+          if-no-files-found: error
+          retention-days: 7
+  container:
+    name: Docker build and runtime health
+    needs: source
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '22'
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          load: true
+          push: false
+          tags: wenying-imgbed:ci
+          cache-from: type=gha,scope=wenying-image
+          cache-to: type=gha,mode=max,scope=wenying-image
+      - name: Start container with fresh database
+        run: |
+          docker run --detach --name imgbed-ci --publish 127.0.0.1:8080:8080 \
+            --env BASIC_USER=ci-admin --env BASIC_PASS="$(openssl rand -hex 24)" \
+            --env MAINTENANCE_DISABLED=true wenying-imgbed:ci
+      - run: node scripts/verify-server.mjs http://127.0.0.1:8080
+      - name: Runtime diagnostics
+        if: failure()
+        run: docker logs --tail 100 imgbed-ci 2>/dev/null || true
+      - name: Clean up
+        if: always()
+        run: docker rm --force imgbed-ci 2>/dev/null || true

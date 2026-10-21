@@ -1,0 +1,19 @@
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 3
+    groups:
+      actions:
+        patterns: ['*']
+  - package-ecosystem: npm
+    directories: ['/', '/frontend']
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 3
+    groups:
+      production-patches:
+        dependency-type: production
+        update-types: [patch]

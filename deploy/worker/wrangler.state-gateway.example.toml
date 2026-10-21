@@ -1,0 +1,27 @@
+# Copy to wrangler.state-gateway.toml and set your own D1/R2 bindings.
+# Configure STATE_GATEWAY_SECRET separately with `wrangler secret put`.
+name = "cloudflare-imgbed-state-gateway"
+main = "state-gateway.js"
+compatibility_date = "2024-08-21"
+workers_dev = true
+keep_vars = true
+
+[vars]
+BACKUP_JSON_MAX_BYTES = "33554432"
+
+[[d1_databases]]
+binding = "img_d1"
+database_name = "imgbed-shared"
+database_id = "00000000-0000-0000-0000-000000000000"
+
+[[r2_buckets]]
+binding = "img_r2"
+bucket_name = "example-images"
+
+[[durable_objects.bindings]]
+name = "HF_COMMITS"
+class_name = "HFCommitCoordinator"
+
+[[migrations]]
+tag = "hf-commit-v1"
+new_sqlite_classes = ["HFCommitCoordinator"]

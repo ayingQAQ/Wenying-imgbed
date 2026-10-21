@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="">
+
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no,viewport-fit=cover">
+  <link rel="icon" href="<%= BASE_URL %>static/media/logo.png">
+  <link rel="apple-touch-icon" href="<%= BASE_URL %>static/media/logo.png">
+  <link rel="mask-icon" href="<%= BASE_URL %>static/media/logo.png" color="#f4b400">
+  <link rel="preload" href="<%= require('../src/assets/fonts/Pacifico-Regular.woff2') %>" as="font" type="font/woff2" crossorigin>
+  <meta name="description" content="Wenying ImgHub - A modern file hosting platform">
+  <meta name="keywords" content="Wenying, ImgHub, file hosting, image hosting, cloud storage">
+  <meta name="author" content="Wenying">
+  <title>Wenying ImgHub</title>
+</head>
+
+<body>
+  <noscript>
+    <strong>We're sorry but <%= htmlWebpackPlugin.options.title %> doesn't work properly without JavaScript enabled.
+        Please enable it to continue.</strong>
+  </noscript>
+  <div id="app">
+    <section class="startup-state" data-phase="loading" role="status" aria-live="polite" aria-busy="true">
+      <div class="startup-art" aria-hidden="true">
+        <svg viewBox="0 0 320 230" xmlns="http://www.w3.org/2000/svg">
+          <ellipse class="cloud-shadow" cx="160" cy="201" rx="66" ry="8" fill="#dce6f5"/>
+          <g class="startup-spark spark-one"><path d="M67 79l3-8 3 8 8 3-8 3-3 8-3-8-8-3z" fill="#ffd67e"/></g>
+          <g class="startup-spark spark-two"><path d="M259 121l2-6 2 6 6 2-6 2-2 6-2-6-6-2z" fill="#a9d9c9"/></g>
+          <circle class="startup-spark spark-three" cx="250" cy="67" r="4" fill="#ffbbaa"/>
+          <g class="cloud-float">
+            <g class="photo-back" transform="rotate(-15 142 93)">
+              <rect x="104" y="43" width="64" height="82" rx="11" fill="#d7e5ff" stroke="#96b5ed" stroke-width="1.5"/>
+              <path d="M114 94l13-17 10 12 10-9 11 15" fill="none" stroke="#8baee8" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+              <circle cx="146" cy="65" r="6" fill="#fff5d8"/>
+            </g>
+            <g class="photo-front" transform="rotate(11 181 87)">
+              <rect x="150" y="39" width="67" height="84" rx="11" fill="#fff" stroke="#9cb8e8" stroke-width="1.5"/>
+              <rect x="157" y="46" width="53" height="57" rx="6" fill="#eaf3ff"/>
+              <circle cx="194" cy="60" r="7" fill="#ffd789"/>
+              <path d="M157 92l16-19 12 13 9-9 16 17v9h-53z" fill="#acc8ed"/>
+              <path d="M161 112h17" stroke="#d4e1f3" stroke-width="3" stroke-linecap="round"/>
+            </g>
+            <path d="M96 174c-19 0-32-13-32-29 0-15 11-28 27-30 3-22 20-38 42-38 18 0 33 9 40 24 6-4 12-6 19-6 19 0 35 14 37 32 16 0 29 10 29 24 0 14-12 23-29 23z" fill="#fff" stroke="#9ab6df" stroke-width="1.7" stroke-linejoin="round"/>
+            <path d="M101 113c3-14 14-24 28-25" fill="none" stroke="#edf4ff" stroke-width="6" stroke-linecap="round"/>
+            <ellipse cx="131" cy="148" rx="10" ry="5" fill="#ffd8d4"/>
+            <ellipse cx="193" cy="148" rx="10" ry="5" fill="#ffd8d4"/>
+            <g class="cloud-eyes" fill="#526b93"><ellipse cx="143" cy="137" rx="3.5" ry="5"/><ellipse cx="181" cy="137" rx="3.5" ry="5"/></g>
+            <path d="M155 146q7 9 14 0" fill="none" stroke="#526b93" stroke-width="2.3" stroke-linecap="round"/>
+            <path d="M83 155q-9-8-14-1M237 155q9-8 14-1" fill="none" stroke="#9ab6df" stroke-width="2" stroke-linecap="round"/>
+          </g>
+        </svg>
+      </div>
+      <strong class="startup-brand">Wenying ImgHub</strong>
+      <p id="startup-status">小云朵正在整理你的图片…</p>
+      <div class="startup-dots" aria-hidden="true"><i></i><i></i><i></i></div>
+      <a id="startup-retry" class="startup-retry" href="" hidden>再试一次 <span aria-hidden="true">↻</span></a>
+    </section>
+  </div>
+  <style>
+    body { margin: 0; }
+    #app > .startup-state { --startup-blue: #4d77be; box-sizing: border-box; min-height: 100vh; min-height: 100svh; padding: 24px 24px 54px; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; background: #f7f8fc; color: #778498; font: 14px/1.8 ui-rounded, "PingFang SC", "Microsoft YaHei", sans-serif; }
+    .startup-art { width: min(280px, 76vw); margin: 0 0 4px; }
+    .startup-art svg { display: block; width: 100%; height: auto; overflow: visible; }
+    .startup-brand { font-size: 21px; line-height: 1.6; letter-spacing: .3px; color: #4b6da7; font-weight: 700; }
+    #startup-status { max-width: 290px; min-height: 26px; margin: 9px 0 0; padding: 0 4px; font-size: 14px; }
+    .startup-dots { display: flex; gap: 7px; height: 28px; margin-top: 16px; align-items: center; }
+    .startup-dots i { width: 5px; height: 5px; border-radius: 50%; background: #98b4df; animation: startup-dot 1.3s ease-in-out infinite; }
+    .startup-dots i:nth-child(2) { animation-delay: .15s; }
+    .startup-dots i:nth-child(3) { animation-delay: .3s; }
+    .startup-retry { min-height: 44px; display: inline-flex; gap: 10px; align-items: center; justify-content: center; box-sizing: border-box; padding: 8px 23px; margin-top: 17px; border: 1px solid #d6e1f1; border-radius: 24px; background: #fff; color: var(--startup-blue); font-weight: 600; text-decoration: none; -webkit-tap-highlight-color: transparent; }
+    .startup-retry:hover { background: #eef4ff; }
+    .startup-retry:focus-visible { outline: 3px solid #b3cef6; outline-offset: 3px; }
+    .startup-state [hidden] { display: none !important; }
+    .cloud-float { animation: startup-float 2.8s ease-in-out infinite; transform-origin: 160px 125px; }
+    .cloud-shadow { animation: startup-shadow 2.8s ease-in-out infinite; transform-origin: 160px 201px; }
+    .cloud-eyes { transform-box: fill-box; transform-origin: center; animation: startup-blink 5.2s infinite; }
+    .startup-spark { animation: startup-spark 3.2s ease-in-out infinite; transform-box: fill-box; transform-origin: center; }
+    .spark-two { animation-delay: -.9s; }.spark-three { animation-delay: -1.8s; }
+    .startup-state[data-phase="error"] .startup-dots { display: none; }
+    .startup-state[data-phase="error"] .cloud-eyes { animation: none; }
+    @keyframes startup-float { 0%, 100% { transform: translateY(2px) rotate(-1deg); } 50% { transform: translateY(-6px) rotate(1deg); } }
+    @keyframes startup-shadow { 0%, 100% { transform: scaleX(1); opacity: .65; } 50% { transform: scaleX(.85); opacity: .4; } }
+    @keyframes startup-blink { 0%, 43%, 47%, 100% { transform: scaleY(1); } 45% { transform: scaleY(.12); } }
+    @keyframes startup-spark { 0%, 100% { opacity: .45; transform: translateY(2px) scale(.9); } 50% { opacity: 1; transform: translateY(-3px) scale(1.08); } }
+    @keyframes startup-dot { 0%, 70%, 100% { transform: translateY(0); opacity: .45; } 35% { transform: translateY(-4px); opacity: 1; } }
+    @media (prefers-color-scheme: dark) { #app > .startup-state { background: #171d29; color: #a4b2c9; }.startup-brand { color: #b9cfee; }.startup-retry { background: #232e42; border-color: #40516c; color: #c4d9fa; } }
+    @media (prefers-reduced-motion: reduce) { .startup-state *, .startup-state *::before, .startup-state *::after { animation: none !important; } }
+  </style>
+  <script>
+    (function () {
+      function elements() {
+        return { state: document.querySelector('.startup-state'), status: document.getElementById('startup-status'), retry: document.getElementById('startup-retry') };
+      }
+      function fail() {
+        var ui = elements();
+        if (!ui.state || !ui.status || !ui.retry) return;
+        ui.state.setAttribute('data-phase', 'error');
+        ui.state.setAttribute('aria-busy', 'false');
+        ui.status.textContent = '图片小站没能连上，点一下再试试吧。';
+        ui.retry.hidden = false;
+      }
+      window.addEventListener('error', function (event) {
+        var src = event.target && event.target.tagName === 'SCRIPT' ? event.target.src : event.filename;
+        if (src && /\/js\/(app|chunk-vendors)\./.test(src)) fail();
+      }, true);
+      setTimeout(function () {
+        var ui = elements();
+        if (ui.state && ui.state.getAttribute('data-phase') !== 'error' && ui.status) ui.status.textContent = '连接有点慢，小云朵还在努力赶路…';
+      }, 10000);
+      setTimeout(function () {
+        var ui = elements();
+        if (ui.retry) ui.retry.hidden = false;
+      }, 30000);
+    })();
+  </script>
+  <!-- built files will be auto injected -->
+</body>
+
+</html>

@@ -1,0 +1,19 @@
+services:
+  imgbed:
+    build: .
+    image: wenying-imgbed:local
+    env_file:
+      - .env
+    environment:
+      BASIC_USER: ${BASIC_USER:?Set BASIC_USER in .env}
+      BASIC_PASS: ${BASIC_PASS:?Set a strong BASIC_PASS in .env}
+    ports:
+      - "127.0.0.1:7658:8080"
+    volumes:
+      - ./data:/app/data
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

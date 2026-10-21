@@ -1,0 +1,9 @@
+{
+  "name": "cloudflare-imgbed",
+  "databaseId": "00000000-0000-0000-0000-000000000000",
+  "databaseName": "imgbed-shared",
+  "bucketName": "imgbed-r2",
+  "zoneName": "example.com",
+  "hosts": ["images.example.com"],
+  "origin": "https://origin.example.com"
+}
