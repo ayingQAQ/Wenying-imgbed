@@ -136,6 +136,9 @@ export default {
 .page-footer p {
     margin: 0;
 }
+
+
+
 @keyframes footer-marquee {
     from { transform: translateX(0); }
     to { transform: translateX(-50%); }
@@ -150,6 +153,7 @@ export default {
     .stats-marquee { margin-bottom: 10px; }
     .stats-item { padding: 6px 11px; font-size: 11px; }
 
+}
 .footer-name {
     color: var(--page-footer-name-color);
     font-weight: bold;
